@@ -1,0 +1,64 @@
+cmake_minimum_required(VERSION 3.15)
+
+project(AYVideo_Tests
+    VERSION 0.5.0
+    DESCRIPTION "AYVideo unit tests (V0.5 stub-only skeleton; TU placeholders per design.md §17)"
+)
+
+set(TEST_TARGET AYVideo_Tests)
+
+# ---------------------------------------------------------------------------
+# V0.5 test target layout (mirrors AYVoxel/unittest/CMakeLists.txt +
+# AYAudio sibling pattern):
+#
+#   * Each Test_<Subject>.cpp is a STAND-ALONE translation unit (one
+#     file = one TU) — avoids MSVC include-order issues per AYAudio
+#     convention. TU isolation also means each file gets fresh state.
+#
+#   * The AYVideo module is STATIC in V0.5 (real stub .cpp files). Tests
+#     link against it as a normal static library; their PUBLIC include
+#     dir comes through `target_link_libraries(... AYVideo)`.
+#
+#   * Backend headers (Null*/Mock*) are reached through the module root
+#     include path (backend/*.h lives one level up from unittest/).
+#
+#   * AYTest comes from AYFoundation/AYTest/CMakeLists.txt.
+# ---------------------------------------------------------------------------
+
+add_executable(${TEST_TARGET}
+    main.cpp
+    # V0.5 stubs — exercise the public surface (design.md §17 + §19).
+    Test_VideoTypes.cpp          # VideoResult 13 codes + toString + sentinel
+    Test_MediaInfo.cpp           # MediaInfo POD defaults + round-trip
+    Test_Frame.cpp               # VideoPacket/VideoFrame carriers + pts typing
+    Test_NullBackends.cpp        # NullDemuxer/NullDecoder contract
+    Test_MockBackends.cpp        # Mock sequence replay + EOS + counters
+    Test_PlayerState.cpp         # state machine + control surface + fault injection
+    Test_SyncClock.cpp           # sync clock contract (fake now provider)
+)
+
+target_link_libraries(${TEST_TARGET} PRIVATE
+    AYVideo
+    AYTest
+    AYTime
+)
+
+target_include_directories(${TEST_TARGET} PRIVATE
+    # Reach backend/*.h through include relative paths (Test_NullBackends.cpp
+    # uses `#include "NullDemuxer.h"` from the AYVideo root). The
+    # unittest/ directory's parent is the module root.
+    ${CMAKE_CURRENT_SOURCE_DIR}/..
+)
+
+target_compile_definitions(${TEST_TARGET} PRIVATE
+    NOMINMAX
+    WIN32_LEAN_AND_MEAN
+)
+
+if(MSVC)
+    target_compile_options(${TEST_TARGET} PRIVATE /W4 /wd4200)
+else()
+    target_compile_options(${TEST_TARGET} PRIVATE -Wall -Wextra -Wpedantic)
+endif()
+
+add_test(NAME ${TEST_TARGET} COMMAND ${TEST_TARGET})

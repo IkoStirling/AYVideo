@@ -1,0 +1,29 @@
+# Build outputs
+build/
+out/
+*.obj
+*.lib
+*.pdb
+*.ilk
+*.exe
+
+# IDE
+.vs/
+*.user
+.vscode/
+
+# CMake artifacts — the *.cmake catch-all silently eats the ffmpeg-leak
+# guard script in cmake/. Re-include CMakeLists.txt + cmake/*.cmake so
+# the guard script can be committed (per AY2D .gitignore gotcha).
+*.cmake
+!CMakeLists.txt
+!**/CMakeLists.txt
+!cmake/*.cmake
+!**/cmake/*.cmake
+
+# OS
+.DS_Store
+Thumbs.db
+
+# Test scratch
+test_isolate.cpp
