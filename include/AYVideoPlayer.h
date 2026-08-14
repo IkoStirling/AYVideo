@@ -154,6 +154,10 @@ public:
     // Media metadata; Ok when state >= Ready, InvalidState otherwise.
     VideoResult getMediaInfo(MediaInfo& outInfo) const;
 
+    // Presentation clock position (EngineClock or AudioMaster).
+    ayt::time::Duration position() const noexcept;
+    SyncSource syncSource() const noexcept;
+
     // The result of the last failed operation (diagnostic; Failed state).
     VideoResult lastResult() const noexcept;
 

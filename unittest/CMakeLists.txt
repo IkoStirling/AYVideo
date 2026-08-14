@@ -35,6 +35,7 @@ add_executable(${TEST_TARGET}
     Test_MockBackends.cpp        # Mock sequence replay + EOS + counters
     Test_PlayerState.cpp         # state machine + control surface + fault injection
     Test_SyncClock.cpp           # sync clock contract (fake now provider)
+    Test_VideoSubSystem.cpp      # V2+ GameLoop subsystem smoke
 )
 
 target_link_libraries(${TEST_TARGET} PRIVATE

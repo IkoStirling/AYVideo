@@ -8,9 +8,11 @@
 // only; the FFmpeg decode pipeline lands in V1+. All public headers
 // are FFmpeg-free (design.md §4.3 guard enforced).
 
+#include "include/AYVideoAudioFrame.h" // §11 PCM carrier
 #include "include/AYVideoFrame.h"      // §6.2 VideoPacket/VideoFrame carriers
 #include "include/AYVideoMediaInfo.h"  // §6.1 MediaInfo snapshot
 #include "include/AYVideoPlayer.h"     // §10 player state machine + control surface
+#include "include/AYVideoSubSystem.h"  // §15 GameLoop subsystem
 #include "include/AYVideoSyncClock.h"  // §9 A/V sync clock contract
 #include "include/AYVideoTypes.h"      // §5 VideoResult + VideoPixelFormat
 #include "interface/IAYVideoBackendFactory.h" // §17 backend construction

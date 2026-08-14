@@ -20,8 +20,9 @@ set(SRC_FILES
     src/AYVideoTypes.cpp             # toString() for VideoResult/VideoPixelFormat
     src/AYVideoBackendFactory.cpp    # make*Backend() construction
     src/AYVideoPlayer.cpp            # player state machine + V1 pipeline
-    src/AYVideoSyncClock.cpp         # sync clock contract (engine-clock path)
-    src/DecodeLoop.cpp               # V1 dedicated decode thread (std::thread)
+    src/AYVideoSyncClock.cpp         # sync clock (engine + audio-master)
+    src/DecodeLoop.cpp               # dedicated decode thread (std::thread)
+    src/AYVideoSubSystem.cpp         # V2+ GameLoop subsystem (§15)
 )
 
 # Backends: Null + Mock (V0.5) + FFmpeg (V1, design.md §7/§8).
@@ -77,14 +78,15 @@ target_include_directories(${MODULE_NAME} PUBLIC
     $<INSTALL_INTERFACE:include>
     $<BUILD_INTERFACE:${CMAKE_CURRENT_SOURCE_DIR}/interface>
     $<INSTALL_INTERFACE:interface>
+    $<BUILD_INTERFACE:${CMAKE_CURRENT_SOURCE_DIR}/ecs>
+    $<INSTALL_INTERFACE:ecs>
 )
 
-# V2 dependency surface:
-#   * AYTime  — Duration / TimePoint (normative)
-#   * AYAudio — PCM bridge openStream/streamPush/playStream (§11)
-# Future:
-#   * AYRenderer (V3 texture upload bridge, §12)
-target_link_libraries(${MODULE_NAME} PUBLIC AYTime AYAudio)
+# V2+ dependency surface:
+#   * AYTime     — Duration / TimePoint
+#   * AYAudio    — PCM bridge (§11)
+#   * AYGameLoop — ISubSystem for VideoSubSystem (§15)
+target_link_libraries(${MODULE_NAME} PUBLIC AYTime AYAudio AYGameLoop)
 
 # FFmpeg is a PRIVATE link (design.md §4.1): consumers of AYVideo never
 # need libav* on their link line, and the public headers stay clean.

@@ -20,7 +20,8 @@ namespace ayt::video
 // POD value type — the subsystem wires this into AYVideoPlayer.
 struct VideoComponent
 {
-    // Player handle owned by the subsystem (V2+); V0.5 keeps the slot.
+    // VideoSubSystem playback slot (0 = none / InvalidVideoPlayback).
+    uint32_t playbackId = 0;
     std::string mediaPath;
     MediaInfo info{};
     ayt::time::Duration currentPosition{};

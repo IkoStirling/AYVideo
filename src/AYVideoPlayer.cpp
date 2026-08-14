@@ -716,6 +716,16 @@ VideoResult AYVideoPlayer::getMediaInfo(MediaInfo& outInfo) const
     return VideoResult::Ok;
 }
 
+ayt::time::Duration AYVideoPlayer::position() const noexcept
+{
+    return _clock.position();
+}
+
+SyncSource AYVideoPlayer::syncSource() const noexcept
+{
+    return _clock.source();
+}
+
 VideoResult AYVideoPlayer::pullFrame(VideoFrame& out)
 {
     out = VideoFrame{};

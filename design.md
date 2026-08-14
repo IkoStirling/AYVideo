@@ -558,7 +558,7 @@ AYRuntime/AYVideo/
 
 - [x] audio-master 同步 + 漂移窗口（§9.2）— `setAudioMasterProvider` + `voicePositionFrames`；`pullFrame` ±40ms 丢帧/等待
 - [x] AYAudio PCM 桥 + F32 SPSC 音频队列（§11）— `attachAudioEngine` / `AudioQueue` / FFmpeg 音频解码→swr→48k F32
-- [ ] 事件/控制面完整 + ECS VideoSubsystem 挂载（§15）— 事件已在 V1；ECS 仍 V2+
+- [x] 事件/控制面完整 + ECS VideoSubsystem 挂载（§15）— `VideoSubSystem` ISubSystem + `VideoComponent.playbackId`；实体 World 遍历仍后续 cross-module PR
 
 ### V3 渲染集成（对齐 §12）
 
@@ -659,6 +659,7 @@ cmake --build D:\Projects\out\build\x64-Debug --target AYVideo_Tests
 
 ## 21. Changelog
 
+- **2026-08-14 (V2+)**：`VideoSubSystem`（ISubSystem priority 650，依赖 Audio）+ `player.position()` + `VideoComponent.playbackId`。
 - **2026-08-14 (V2 start)**：AudioMaster provider + drift 窗口；AYAudio `voicePositionFrames`；FFmpeg 可选音频解码 + AudioQueue + `attachAudioEngine` PCM 桥。ECS VideoSubsystem 仍 V2+。
 - **2026-08-14 (V1)**：FFmpeg 后端 + DecodeLoop + FrameQueue + `pullFrame` + 事件；544/544 × 3-run；guard 双向验证；A-13/A-14 落地修正与 deferred。
 - **2026-08-13 (V0.5)**：模块创建。公共面 8 头 + 4 后端 + Player 状态机 + SyncClock stub；194/194 PASS。2 个构建期修复：moved-from fixture 空指针 segfault（加 seam + fixture 重构）；SyncClock 无锚点垃圾 position（`_anchored` 门）。guard 硬门禁就位。
