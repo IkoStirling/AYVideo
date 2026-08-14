@@ -27,11 +27,15 @@
 #include "AYVideoFrame.h"
 #include "AYVideoMediaInfo.h"
 #include "AYVideoPlayer.h"
+#include "AYVideoSyncClock.h"
 #include "AYVideoTypes.h"
 #include "IAYVideoBackendFactory.h"
 #include "IAYVideoDemuxer.h"
 #include "IVideoFrameTexture.h"
 #include "backend/RendererVideoFrameTexture.h"
+
+#include <AYAudioEngine.h>
+#include <AYAudioTypes.h>
 
 #include <aymath/MathTransform.h>
 #include <aymath/MathTypes.h>
@@ -120,9 +124,11 @@ struct DemoState
     bool gpuReady = false;
 
     std::unique_ptr<ayt::video::AYVideoPlayer> player;
+    std::unique_ptr<ayt::audio::AudioEngine> audio;
     ayt::video::MediaInfo media{};
     std::vector<uint8_t> solidStorage; // CI path only
     bool scrubSubclassed = false;
+    bool audioAttached = false;
 };
 
 void onPause(DemoState& state);
@@ -624,6 +630,53 @@ bool ensurePlayer(DemoState& state)
             setStatus(state, L"Playing");
         }
     });
+
+    // Attach AYAudio before open (Idle only). Miniaudio for audible A/V
+    // verification; AYVIDEO_DEMO_AUDIO=0 forces Null (silent bridge still
+    // exercises decodeAudio / AudioMaster wiring).
+    if (!state.audio)
+    {
+        state.audio = std::make_unique<ayt::audio::AudioEngine>();
+        ayt::audio::AudioSettings settings{};
+        settings.sampleRate = 48000;
+        settings.channels = 2;
+        settings.commandQueueCapacity = 64;
+        settings.maxVoices = 8;
+        settings.maxClips = 8;
+        char envAudio[8] = {};
+        const bool wantNull =
+            GetEnvironmentVariableA("AYVIDEO_DEMO_AUDIO", envAudio,
+                                    static_cast<DWORD>(sizeof(envAudio)))
+                > 0
+            && (envAudio[0] == '0');
+        settings.backend = wantNull ? ayt::audio::AudioBackendKind::Null
+                                    : ayt::audio::AudioBackendKind::Miniaudio;
+        if (!state.audio->initialize(settings))
+        {
+            std::fprintf(stderr,
+                         "[AYVideoDemo] AudioEngine initialize failed "
+                         "(backend=%s) — continuing video-only\n",
+                         wantNull ? "Null" : "Miniaudio");
+            state.audio.reset();
+        }
+        else
+        {
+            std::fprintf(stderr,
+                         "[AYVideoDemo] AudioEngine ready backend=%s\n",
+                         wantNull ? "Null" : "Miniaudio");
+        }
+    }
+    if (state.audio && !state.audioAttached)
+    {
+        const auto ar = state.player->attachAudioEngine(state.audio.get());
+        state.audioAttached = (ar == ayt::video::VideoResult::Ok);
+        if (!state.audioAttached)
+        {
+            std::fprintf(stderr,
+                         "[AYVideoDemo] attachAudioEngine failed: %s\n",
+                         ayt::video::toString(ar));
+        }
+    }
     return true;
 }
 
@@ -673,7 +726,11 @@ void onOpen(DemoState& state)
                   + widen(std::to_string(state.media.width) + "x"
                           + std::to_string(state.media.height) + " "
                           + state.media.videoCodec)
-                  + (http ? L" (HTTP)" : L""));
+                  + (state.media.hasAudio
+                         ? L" +audio"
+                         : L" (video-only)")
+                  + (http ? L" (HTTP)" : L"")
+                  + (state.audioAttached ? L" [AYAudio]" : L""));
     updateTimeLabel(state);
 }
 
@@ -697,7 +754,9 @@ void onPlay(DemoState& state)
         setStatus(state, L"Play failed: " + widen(ayt::video::toString(r)));
         return;
     }
-    setStatus(state, L"Playing");
+    setStatus(state,
+              L"Playing sync="
+                  + widen(ayt::video::toString(state.player->syncSource())));
 }
 
 void onPause(DemoState& state)
@@ -991,6 +1050,11 @@ void tickPlayback(DemoState& state)
     if (!state.interactive || !state.player || !state.gpuReady)
     {
         return;
+    }
+    // Drive AYAudio command pump every frame (required for stream voices).
+    if (state.audio && state.audio->isInitialized())
+    {
+        state.audio->submitFrame(0.0f);
     }
     ayt::render::RendererSubSystem* rss =
         ayt::render::RendererSubSystem::findRegistered();
@@ -1466,7 +1530,14 @@ int main()
     if (state.player)
     {
         (void)state.player->stop();
+        (void)state.player->attachAudioEngine(nullptr);
+        state.audioAttached = false;
         state.player.reset();
+    }
+    if (state.audio)
+    {
+        state.audio->shutdown();
+        state.audio.reset();
     }
     loop.shutdown();
 

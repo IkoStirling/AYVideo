@@ -53,6 +53,7 @@ target_link_libraries(AYVideo_EngineDemo PRIVATE
     AYVideo
     AYRenderer
     AYGameLoop
+    AYAudio
 )
 
 # Reach backend/RendererVideoFrameTexture.h for gpuHandle().
