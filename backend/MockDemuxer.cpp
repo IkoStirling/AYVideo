@@ -67,6 +67,17 @@ VideoResult MockDemuxer::getMediaInfo(MediaInfo& outInfo) const
     outInfo.durationSec = static_cast<double>(_packetCount) / 25.0;
     outInfo.hasVideo = true;
     outInfo.videoCodec = "mock-h264";
+    if (_provideSubtitle)
+    {
+        SubtitleTrackInfo sub{};
+        sub.streamIndex = 1;
+        sub.kind = SubtitleKind::Text;
+        sub.codec = "mock-srt";
+        sub.language = "eng";
+        sub.title = "Mock English";
+        outInfo.subtitleTracks.push_back(sub);
+        outInfo.hasSubtitles = true;
+    }
     return VideoResult::Ok;
 }
 

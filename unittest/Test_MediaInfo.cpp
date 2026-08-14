@@ -20,6 +20,8 @@ TEST_SUITE(MediaInfoSuite)
         CHECK_FLOAT_EQ(static_cast<float>(info.durationSec), 0.0f, 1e-9f);
         CHECK_FALSE(info.hasVideo);
         CHECK_FALSE(info.hasAudio);
+        CHECK_FALSE(info.hasSubtitles);
+        CHECK_TRUE(info.subtitleTracks.empty());
         CHECK_TRUE(info.videoCodec.empty());
         CHECK_TRUE(info.audioCodec.empty());
     }

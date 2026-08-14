@@ -38,6 +38,7 @@ add_executable(${TEST_TARGET}
     Test_VideoSubSystem.cpp      # V2+ GameLoop subsystem smoke
     Test_FrameTexture.cpp        # V3 color convert + IVideoFrameTexture
     Test_ErrorRecovery.cpp       # V4 soft-skip mid-stream Demux/Decode errors
+    Test_SubtitleTracks.cpp      # V4 soft-subtitle track discovery
 )
 
 # V3 GPU bridge — needs AYRenderer Noop backend (design.md §12).

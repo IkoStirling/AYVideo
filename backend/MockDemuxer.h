@@ -19,6 +19,12 @@ class MockDemuxer final : public IAYVideoDemuxer
 public:
     explicit MockDemuxer(int32_t packetCount);
 
+    // V4 soft-subtitle discovery: when true, getMediaInfo reports one
+    // Text track (codec=mock-srt, lang=eng). Default off so existing
+    // Mock fixtures stay subtitle-free.
+    void setProvideSubtitleTrack(bool on) noexcept { _provideSubtitle = on; }
+    bool provideSubtitleTrack() const noexcept { return _provideSubtitle; }
+
     // Fault injection (design.md §19): when enabled, open() returns
     // DemuxError — drives the player's Failed state.
     void setFailOpen(bool fail) noexcept { _failOpen = fail; }
@@ -52,6 +58,7 @@ private:
     bool _open = false;
     bool _closed = false;
     bool _failOpen = false;
+    bool _provideSubtitle = false;
     int32_t _failReadAt = -1;
     bool _failReadDone = false;
 

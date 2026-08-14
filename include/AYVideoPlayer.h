@@ -15,6 +15,7 @@
 
 #include <AYVideoAudioFrame.h>
 #include <AYVideoMediaInfo.h>
+#include <AYVideoSubtitle.h>
 #include <AYVideoSyncClock.h>
 #include <AYVideoTypes.h>
 #include <IAYVideoBackendFactory.h>
@@ -155,6 +156,14 @@ public:
     // Media metadata; Ok when state >= Ready, InvalidState otherwise.
     VideoResult getMediaInfo(MediaInfo& outInfo) const;
 
+    // V4 soft-subtitle track discovery (N-08). Valid from Ready/Playing/
+    // Paused/Seeking. setActiveSubtitleTrack stores selection only —
+    // cue demux/render is not implemented in this slice (-1 = off).
+    uint32_t subtitleTrackCount() const noexcept;
+    VideoResult getSubtitleTrack(uint32_t index, SubtitleTrackInfo& out) const;
+    VideoResult setActiveSubtitleTrack(int32_t index) noexcept;
+    int32_t activeSubtitleTrack() const noexcept;
+
     // Presentation clock position (EngineClock or AudioMaster).
     ayt::time::Duration position() const noexcept;
     SyncSource syncSource() const noexcept;
@@ -210,6 +219,9 @@ private:
     // V4 seek accuracy: drop decoded frames with pts < this floor
     // (set by seek(); cleared on open/stop / play-from-Ready restart).
     ayt::time::Duration _minPresentPts{};
+    // V4: selected subtitle track index into MediaInfo::subtitleTracks,
+    // or -1 when off. Selection only — no cue pipeline yet.
+    int32_t _activeSubtitleTrack = -1;
 
     // AYAudio PCM bridge (not owned). Handles are Invalid* when inactive.
     ayt::audio::AudioEngine* _audioEngine = nullptr;

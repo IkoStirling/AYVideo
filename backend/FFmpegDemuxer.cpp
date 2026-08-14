@@ -3,8 +3,10 @@
 // design.md §2.1 G-01: ffmpeg headers live only in backend .cpp files.
 // The public surface (include/ + interface/) never sees these.
 extern "C" {
+#include <libavcodec/avcodec.h>
 #include <libavformat/avformat.h>
 #include <libavutil/avutil.h>
+#include <libavutil/dict.h>
 #include <libavutil/error.h>
 #include <libavutil/log.h>
 #include <libavutil/time.h>
@@ -240,6 +242,60 @@ VideoResult FFmpegDemuxer::getMediaInfo(MediaInfo& outInfo) const
         outInfo.durationSec = static_cast<double>(ctx->duration) /
                               1'000'000.0; // AV_TIME_BASE = 1e6 µs
     }
+
+    // V4: enumerate soft-subtitle streams (discovery only; packets still
+    // skipped in readNextPacket).
+    for (unsigned i = 0; i < ctx->nb_streams; ++i)
+    {
+        const AVStream* st = ctx->streams[i];
+        if (!st || !st->codecpar
+            || st->codecpar->codec_type != AVMEDIA_TYPE_SUBTITLE)
+        {
+            continue;
+        }
+        SubtitleTrackInfo track{};
+        track.streamIndex = static_cast<int32_t>(i);
+        if (const AVCodec* codec = avcodec_find_decoder(st->codecpar->codec_id))
+        {
+            track.codec = codec->name;
+        }
+        // Heuristic kind from codec id / name.
+        switch (st->codecpar->codec_id)
+        {
+        case AV_CODEC_ID_ASS:
+        case AV_CODEC_ID_SSA:
+            track.kind = SubtitleKind::Ass;
+            break;
+        case AV_CODEC_ID_DVD_SUBTITLE:
+        case AV_CODEC_ID_HDMV_PGS_SUBTITLE:
+        case AV_CODEC_ID_DVB_SUBTITLE:
+            track.kind = SubtitleKind::Bitmap;
+            break;
+        case AV_CODEC_ID_SUBRIP:
+        case AV_CODEC_ID_TEXT:
+        case AV_CODEC_ID_WEBVTT:
+        case AV_CODEC_ID_MOV_TEXT:
+            track.kind = SubtitleKind::Text;
+            break;
+        default:
+            track.kind = SubtitleKind::Unknown;
+            break;
+        }
+        AVDictionaryEntry* lang =
+            av_dict_get(st->metadata, "language", nullptr, 0);
+        if (lang && lang->value)
+        {
+            track.language = lang->value;
+        }
+        AVDictionaryEntry* title =
+            av_dict_get(st->metadata, "title", nullptr, 0);
+        if (title && title->value)
+        {
+            track.title = title->value;
+        }
+        outInfo.subtitleTracks.push_back(track);
+    }
+    outInfo.hasSubtitles = !outInfo.subtitleTracks.empty();
     return VideoResult::Ok;
 }
 

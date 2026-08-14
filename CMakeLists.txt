@@ -24,6 +24,7 @@ set(SRC_FILES
     src/DecodeLoop.cpp               # dedicated decode thread (std::thread)
     src/AYVideoSubSystem.cpp         # V2+ GameLoop subsystem (§15)
     src/VideoColorConvert.cpp        # V3 I420/NV12 → RGBA8 (§12)
+    src/AYVideoSubtitle.cpp          # V4 SubtitleKind toString
 )
 
 # Backends: Null + Mock (V0.5) + FFmpeg (V1, design.md §7/§8).

@@ -99,6 +99,8 @@ AYVideoPlayer::AYVideoPlayer(AYVideoPlayer&& other) noexcept
     _held = std::move(other._held);
     _presented = std::move(other._presented);
     _clock = std::move(other._clock);
+    _minPresentPts = other._minPresentPts;
+    _activeSubtitleTrack = other._activeSubtitleTrack;
     _audioEngine = other._audioEngine;
     _audioStreamId = other._audioStreamId;
     _audioVoice = other._audioVoice;
@@ -106,6 +108,7 @@ AYVideoPlayer::AYVideoPlayer(AYVideoPlayer&& other) noexcept
     other._audioEngine = nullptr;
     other._audioStreamId = 0;
     other._audioVoice = 0;
+    other._activeSubtitleTrack = -1;
     other._state = PlayerState::Stopped;
 }
 
@@ -136,6 +139,8 @@ AYVideoPlayer& AYVideoPlayer::operator=(AYVideoPlayer&& other) noexcept
     _held = std::move(other._held);
     _presented = std::move(other._presented);
     _clock = std::move(other._clock);
+    _minPresentPts = other._minPresentPts;
+    _activeSubtitleTrack = other._activeSubtitleTrack;
     _audioEngine = other._audioEngine;
     _audioStreamId = other._audioStreamId;
     _audioVoice = other._audioVoice;
@@ -143,6 +148,7 @@ AYVideoPlayer& AYVideoPlayer::operator=(AYVideoPlayer&& other) noexcept
     other._audioEngine = nullptr;
     other._audioStreamId = 0;
     other._audioVoice = 0;
+    other._activeSubtitleTrack = -1;
     other._state = PlayerState::Stopped;
     return *this;
 }
@@ -491,6 +497,7 @@ VideoResult AYVideoPlayer::open(const std::string& path)
     _held.reset();
     _presented.reset();
     _minPresentPts = {};
+    _activeSubtitleTrack = -1;
     _lastResult = VideoResult::Ok;
     transition(PlayerState::Opening, PlayerState::Ready);
     return VideoResult::Ok;
@@ -628,6 +635,7 @@ VideoResult AYVideoPlayer::stop()
     _info = MediaInfo{};
     _path.clear();
     _minPresentPts = {};
+    _activeSubtitleTrack = -1;
     _clock.reset();
     transition(_state, PlayerState::Stopped);
     return VideoResult::Ok;
@@ -732,6 +740,51 @@ VideoResult AYVideoPlayer::getMediaInfo(MediaInfo& outInfo) const
     }
     outInfo = _info;
     return VideoResult::Ok;
+}
+
+uint32_t AYVideoPlayer::subtitleTrackCount() const noexcept
+{
+    return static_cast<uint32_t>(_info.subtitleTracks.size());
+}
+
+VideoResult AYVideoPlayer::getSubtitleTrack(uint32_t index,
+                                             SubtitleTrackInfo& out) const
+{
+    if (_state != PlayerState::Ready && _state != PlayerState::Playing
+        && _state != PlayerState::Paused && _state != PlayerState::Seeking)
+    {
+        return VideoResult::InvalidState;
+    }
+    if (index >= _info.subtitleTracks.size())
+    {
+        return VideoResult::InvalidArgument;
+    }
+    out = _info.subtitleTracks[index];
+    return VideoResult::Ok;
+}
+
+VideoResult AYVideoPlayer::setActiveSubtitleTrack(int32_t index) noexcept
+{
+    if (_state != PlayerState::Ready && _state != PlayerState::Playing
+        && _state != PlayerState::Paused && _state != PlayerState::Seeking)
+    {
+        _lastResult = VideoResult::InvalidState;
+        return VideoResult::InvalidState;
+    }
+    if (index < -1
+        || index >= static_cast<int32_t>(_info.subtitleTracks.size()))
+    {
+        _lastResult = VideoResult::InvalidArgument;
+        return VideoResult::InvalidArgument;
+    }
+    _activeSubtitleTrack = index;
+    _lastResult = VideoResult::Ok;
+    return VideoResult::Ok;
+}
+
+int32_t AYVideoPlayer::activeSubtitleTrack() const noexcept
+{
+    return _activeSubtitleTrack;
 }
 
 ayt::time::Duration AYVideoPlayer::position() const noexcept
