@@ -1,8 +1,8 @@
 cmake_minimum_required(VERSION 3.12)
 
 project(AYVideo
-    VERSION 2.0.0
-    DESCRIPTION "AYVideo — video playback submodule (V2 A/V sync + AYAudio PCM bridge)"
+    VERSION 3.0.0
+    DESCRIPTION "AYVideo — video playback submodule (V3 frame texture + color convert)"
 )
 
 # =============================================================================
@@ -23,6 +23,7 @@ set(SRC_FILES
     src/AYVideoSyncClock.cpp         # sync clock (engine + audio-master)
     src/DecodeLoop.cpp               # dedicated decode thread (std::thread)
     src/AYVideoSubSystem.cpp         # V2+ GameLoop subsystem (§15)
+    src/VideoColorConvert.cpp        # V3 I420/NV12 → RGBA8 (§12)
 )
 
 # Backends: Null + Mock (V0.5) + FFmpeg (V1, design.md §7/§8).
@@ -33,6 +34,8 @@ set(BACKEND_FILES
     backend/MockDemuxer.cpp
     backend/NullDecoder.cpp
     backend/MockDecoder.cpp
+    backend/CpuVideoFrameTexture.cpp
+    backend/MockVideoFrameTexture.cpp
 )
 
 # vcpkg FindFFMPEG exposes FFMPEG_* variables (LIBRARIES / INCLUDE_DIRS /
@@ -147,4 +150,4 @@ else()
         "skipping enable_testing/add_subdirectory for V0.5.")
 endif()
 
-message(STATUS "AYVideo v2.0.0 (V2 A/V sync + AYAudio PCM bridge) — see ${CMAKE_CURRENT_SOURCE_DIR}/design.md")
+message(STATUS "AYVideo v3.0.0 (V3 frame texture + color convert) — see ${CMAKE_CURRENT_SOURCE_DIR}/design.md")

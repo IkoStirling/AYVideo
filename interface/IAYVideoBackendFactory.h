@@ -13,6 +13,7 @@
 
 #include <IAYVideoDecoder.h>
 #include <IAYVideoDemuxer.h>
+#include <IVideoFrameTexture.h>
 
 #include <memory>
 
@@ -30,5 +31,10 @@ std::unique_ptr<IAYVideoDecoder> makeMockDecoder(int32_t frameCount);
 // public surface stays clean (G-01).
 std::unique_ptr<IAYVideoDemuxer> makeFFmpegDemuxer();
 std::unique_ptr<IAYVideoDecoder> makeFFmpegDecoder();
+
+// V3: CPU / mock frame textures (design.md §12). GPU upload bridge
+// lives in AYRenderer and is not constructed here.
+std::unique_ptr<IVideoFrameTexture> makeCpuVideoFrameTexture();
+std::unique_ptr<IVideoFrameTexture> makeMockVideoFrameTexture();
 
 } // namespace ayt::video

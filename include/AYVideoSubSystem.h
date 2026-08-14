@@ -15,6 +15,8 @@
 #include <AYVideoTypes.h>
 #include <IAYVideoDecoder.h>
 #include <IAYVideoDemuxer.h>
+#include <IAYVideoFrameSink.h>
+#include <IVideoFrameTexture.h>
 #include <aytime/Duration.h>
 
 #include <AYGameLoop.h>
@@ -68,12 +70,21 @@ public:
     // Open + play. Returns InvalidVideoPlayback on failure.
     VideoPlaybackId play(const std::string& path, bool loop = false);
 
+    // Attach a frame texture (not owned). Updated each present tick via
+    // updateFromFrame (design.md §12). nullptr clears.
+    void setFrameTexture(VideoPlaybackId id, IVideoFrameTexture* texture) noexcept;
+
+    // Optional present sink (not owned). Fired after a successful texture
+    // update. nullptr clears.
+    void setFrameSink(IAYVideoFrameSink* sink) noexcept { _sink = sink; }
+
     void stop(VideoPlaybackId id);
     void pause(VideoPlaybackId id);
     void resume(VideoPlaybackId id);
 
     VideoPlaybackInfo info(VideoPlaybackId id) const;
     AYVideoPlayer* player(VideoPlaybackId id) noexcept;
+    IVideoFrameTexture* frameTexture(VideoPlaybackId id) noexcept;
 
     // Last frame presented by update() for this slot. data valid until
     // the next update()/stop() on the same id.
@@ -88,6 +99,7 @@ private:
         VideoFrame frame{};
         bool hasFrame = false;
         bool inUse = false;
+        IVideoFrameTexture* texture = nullptr; // not owned
     };
 
     Slot* findSlot(VideoPlaybackId id) noexcept;
@@ -97,6 +109,7 @@ private:
 
     BackendFactory _factory;
     NowFn _now = nullptr;
+    IAYVideoFrameSink* _sink = nullptr;
     ayt::game::SubSystemDescriptor _descriptor{};
     std::vector<Slot> _slots;
     VideoPlaybackId _nextId = 1;

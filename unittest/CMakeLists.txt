@@ -36,6 +36,7 @@ add_executable(${TEST_TARGET}
     Test_PlayerState.cpp         # state machine + control surface + fault injection
     Test_SyncClock.cpp           # sync clock contract (fake now provider)
     Test_VideoSubSystem.cpp      # V2+ GameLoop subsystem smoke
+    Test_FrameTexture.cpp        # V3 color convert + IVideoFrameTexture
 )
 
 target_link_libraries(${TEST_TARGET} PRIVATE

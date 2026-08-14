@@ -9,9 +9,12 @@
 #include "AYTest.h"
 #include "AYVideoSubSystem.h"
 #include "AYVideoTypes.h"
+#include "IAYVideoBackendFactory.h"
+#include "IAYVideoFrameSink.h"
 #include "VideoComponent.h"
 #include "backend/MockDecoder.h"
 #include "backend/MockDemuxer.h"
+#include "backend/MockVideoFrameTexture.h"
 
 #include <aytime/TimePoint.h>
 
@@ -29,6 +32,16 @@ struct FakeNow
     }
 };
 std::int64_t FakeNow::us = 0;
+
+struct CountingSink : IAYVideoFrameSink
+{
+    uint32_t count = 0;
+    void onVideoFrame(uint32_t /*id*/, IVideoFrameTexture& tex) override
+    {
+        ++count;
+        CHECK(tex.rgba8Data() != nullptr);
+    }
+};
 
 } // namespace
 
@@ -79,6 +92,43 @@ TEST_SUITE(VideoSubSystemSuite)
 
         sys.stop(id);
         CHECK(sys.player(id) == nullptr);
+        sys.shutdown();
+    }
+
+    TEST_CASE(VideoSubSystemUpdatesFrameTextureAndSink) {
+        VideoSubSystem sys;
+        sys.setNowFn(&FakeNow::tick);
+        sys.setBackendFactory([] {
+            return std::make_pair(
+                std::unique_ptr<IAYVideoDemuxer>(std::make_unique<MockDemuxer>(8)),
+                std::unique_ptr<IAYVideoDecoder>(std::make_unique<MockDecoder>(8)));
+        });
+        CHECK(sys.initialize());
+
+        CountingSink sink;
+        sys.setFrameSink(&sink);
+        FakeNow::us = 0;
+        const VideoPlaybackId id = sys.play("mock://tex", false);
+        CHECK(id != InvalidVideoPlayback);
+
+        MockVideoFrameTexture tex;
+        sys.setFrameTexture(id, &tex);
+
+        for (int i = 0; i < 2000; ++i)
+        {
+            sys.update(0.0f);
+            if (tex.updateCount() > 0)
+            {
+                break;
+            }
+            std::this_thread::sleep_for(std::chrono::milliseconds(1));
+        }
+        CHECK(tex.updateCount() > 0);
+        CHECK(sink.count > 0);
+        CHECK_INT_EQ(static_cast<int>(tex.format()),
+                     static_cast<int>(VideoPixelFormat::RGBA8));
+
+        sys.stop(id);
         sys.shutdown();
     }
 

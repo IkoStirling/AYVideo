@@ -1,7 +1,9 @@
 #include <IAYVideoBackendFactory.h>
 
+#include "../backend/CpuVideoFrameTexture.h"
 #include "../backend/MockDecoder.h"
 #include "../backend/MockDemuxer.h"
+#include "../backend/MockVideoFrameTexture.h"
 #include "../backend/NullDecoder.h"
 #include "../backend/NullDemuxer.h"
 
@@ -38,9 +40,6 @@ std::unique_ptr<IAYVideoDemuxer> makeFFmpegDemuxer()
 #ifdef AYVIDEO_HAS_FFMPEG
     return std::make_unique<FFmpegDemuxer>();
 #else
-    // Build without the vcpkg ffmpeg package: the FFmpeg backends do not
-    // exist in this binary. The player reports UnsupportedFormat on open
-    // (null backends are guarded in AYVideoPlayer::open).
     return nullptr;
 #endif
 }
@@ -52,6 +51,16 @@ std::unique_ptr<IAYVideoDecoder> makeFFmpegDecoder()
 #else
     return nullptr;
 #endif
+}
+
+std::unique_ptr<IVideoFrameTexture> makeCpuVideoFrameTexture()
+{
+    return std::make_unique<CpuVideoFrameTexture>();
+}
+
+std::unique_ptr<IVideoFrameTexture> makeMockVideoFrameTexture()
+{
+    return std::make_unique<MockVideoFrameTexture>();
 }
 
 } // namespace ayt::video

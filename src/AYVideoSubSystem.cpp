@@ -189,6 +189,21 @@ void VideoSubSystem::stop(VideoPlaybackId id)
     *s = Slot{};
 }
 
+void VideoSubSystem::setFrameTexture(VideoPlaybackId id,
+                                     IVideoFrameTexture* texture) noexcept
+{
+    if (Slot* s = findSlot(id))
+    {
+        s->texture = texture;
+    }
+}
+
+IVideoFrameTexture* VideoSubSystem::frameTexture(VideoPlaybackId id) noexcept
+{
+    Slot* s = findSlot(id);
+    return s ? s->texture : nullptr;
+}
+
 void VideoSubSystem::pause(VideoPlaybackId id)
 {
     if (Slot* s = findSlot(id); s && s->player)
@@ -259,6 +274,23 @@ void VideoSubSystem::update(float /*deltaTime*/)
             s.frame = f;
             s.frame.data = s.framePixels.data();
             s.hasFrame = true;
+
+            if (s.texture)
+            {
+                if (s.texture->updateFromFrame(s.frame) == VideoResult::Ok)
+                {
+                    if (_sink)
+                    {
+                        try
+                        {
+                            _sink->onVideoFrame(s.id, *s.texture);
+                        }
+                        catch (...)
+                        {
+                        }
+                    }
+                }
+            }
         }
         else if (r == VideoResult::EndOfStream)
         {
