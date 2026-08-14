@@ -41,16 +41,35 @@ void AYVideoSyncClock::reset(const ayt::time::Duration& mediaStart) noexcept
     _anchored = true;
 }
 
+void AYVideoSyncClock::setAudioMasterProvider(AudioMasterFn fn, void* user) noexcept
+{
+    _audioMaster = fn;
+    _audioMasterUser = user;
+    if (_source == SyncSource::AudioMaster && !_audioMaster)
+    {
+        // Provider cleared while AudioMaster was active — fall back.
+        _source = SyncSource::EngineClock;
+    }
+}
+
 VideoResult AYVideoSyncClock::setSource(SyncSource source) noexcept
 {
     if (source == SyncSource::AudioMaster)
     {
-        // design.md §9.2: audio-master arrives with the V2 AYAudio
-        // bridge; until then the engine-clock fallback applies.
-        return VideoResult::InvalidState;
+        if (!_audioMaster)
+        {
+            // design.md §9.2: AudioMaster needs a position provider.
+            return VideoResult::InvalidState;
+        }
+        _source = SyncSource::AudioMaster;
+        return VideoResult::Ok;
     }
-    _source = source;
-    return VideoResult::Ok;
+    if (source == SyncSource::EngineClock)
+    {
+        _source = SyncSource::EngineClock;
+        return VideoResult::Ok;
+    }
+    return VideoResult::InvalidArgument;
 }
 
 SyncSource AYVideoSyncClock::source() const noexcept
@@ -60,14 +79,24 @@ SyncSource AYVideoSyncClock::source() const noexcept
 
 ayt::time::Duration AYVideoSyncClock::computePosition() const noexcept
 {
+    if (_paused)
+    {
+        return _pausedAt;
+    }
+
+    if (_source == SyncSource::AudioMaster)
+    {
+        if (!_audioMaster)
+        {
+            return {};
+        }
+        return _audioMaster(_audioMasterUser);
+    }
+
     if (!_anchored)
     {
         // No anchor set yet: position is 0 until reset() (design.md §9.1).
         return {};
-    }
-    if (_paused)
-    {
-        return _pausedAt;
     }
     const ayt::time::Duration elapsed = wallNow() - _anchorWall;
     // position = mediaStart + elapsed * rate  (engine-clock path)
@@ -110,11 +139,22 @@ void AYVideoSyncClock::markResumed() noexcept
     if (_paused)
     {
         // Re-anchor the wall clock so position continuity holds across
-        // the pause boundary.
+        // the pause boundary (engine path). AudioMaster resumes by
+        // reading the live provider again after un-pause.
         _anchorMediaStart = _pausedAt;
         _anchorWall = wallNow();
         _paused = false;
     }
+}
+
+void AYVideoSyncClock::setDriftTolerance(const ayt::time::Duration& tol) noexcept
+{
+    _driftTol = tol;
+}
+
+ayt::time::Duration AYVideoSyncClock::driftTolerance() const noexcept
+{
+    return _driftTol;
 }
 
 } // namespace ayt::video

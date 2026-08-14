@@ -1,14 +1,9 @@
 #pragma once
 // AYVideoSyncClock.h — A/V synchronization clock.
 //
-// design.md §9: master/slave presentation clock. V0.5 ships the contract
-// + engine-clock fallback stub; the audio-master implementation lands in
-// V2 (AudioEngine::streamPush position query via the AYAudio bridge,
-// design.md §11). V1 uses the EngineClock source so video-only playback
-// runs on ayt::time::Clock::gameNow().
-//
-// Thread contract (design.md §14): single-threaded (player thread);
-// workers read position through atomics in V1+.
+// design.md §9: master/slave presentation clock. V0.5 shipped the
+// engine-clock path; V2 enables AudioMaster when a position provider is
+// installed (AYAudio voicePositionFrames via the PCM bridge, §11).
 
 #include <AYVideoTypes.h>
 #include <aytime/Duration.h>
@@ -23,6 +18,11 @@ namespace ayt::video
 // fake to keep position() deterministic (design.md §19); nullptr uses
 // ayt::time::TimePoint::now().
 using NowFn = ayt::time::TimePoint (*)() noexcept;
+
+// Audio-master position provider (design.md §9.2 / §11). Returns the
+// current media time driven by the audio render head. nullptr = not
+// installed → setSource(AudioMaster) returns InvalidState.
+using AudioMasterFn = ayt::time::Duration (*)(void* user) noexcept;
 
 // Master source driving the presentation clock (design.md §9.2).
 enum class SyncSource : uint8_t
@@ -39,22 +39,29 @@ class AYVideoSyncClock
 public:
     explicit AYVideoSyncClock(NowFn now = nullptr) noexcept;
 
-    // V0.5: state + contract. `mediaStart` anchors the timeline so
-    // position() == 0 at open (design.md §9.1).
+    // Anchors the engine-clock timeline so position() == mediaStart at
+    // the call. AudioMaster ignores the wall anchor but still records
+    // mediaStart for pause bookkeeping after a source switch.
     void reset(const ayt::time::Duration& mediaStart = {}) noexcept;
 
-    // Sets the master source. AudioMaster returns InvalidState until V2
-    // (engine clock fallback applies).
+    // Install / clear the audio-master position provider. Must be set
+    // before setSource(AudioMaster) succeeds.
+    void setAudioMasterProvider(AudioMasterFn fn, void* user = nullptr) noexcept;
+
+    // Sets the master source. AudioMaster requires a provider (else
+    // InvalidState; source unchanged).
     VideoResult setSource(SyncSource source) noexcept;
     SyncSource source() const noexcept;
 
-    // Current presentation position. When no anchor is set yet, returns
-    // Duration{} (position 0).
+    // Current presentation position. When no anchor is set yet (engine
+    // path) or no provider (audio path before install), returns 0.
     ayt::time::Duration position() const noexcept;
 
-    // Playback rate consumed by the position integral. Valid range
+    // Playback rate consumed by the EngineClock integral. Valid range
     // [0.25, 4.0]; out-of-range returns InvalidArgument and leaves the
     // rate unchanged (design.md §9.3 — reject, never silently clamp).
+    // AudioMaster position is the audio render head (rate does not
+    // scale it — audio skip/resample is outside V2).
     VideoResult setRate(double rate) noexcept;
     double rate() const noexcept;
 
@@ -63,21 +70,31 @@ public:
     void markPaused() noexcept;
     void markResumed() noexcept;
 
+    // Drift window for slave (video) vs master (design.md §9.2). Default
+    // ±40 ms. Used by pullFrame presentation gating.
+    void setDriftTolerance(const ayt::time::Duration& tol) noexcept;
+    ayt::time::Duration driftTolerance() const noexcept;
+
 private:
     ayt::time::TimePoint wallNow() const noexcept;
     ayt::time::Duration computePosition() const noexcept;
 
     NowFn _now = nullptr;
+    AudioMasterFn _audioMaster = nullptr;
+    void* _audioMasterUser = nullptr;
     SyncSource _source = SyncSource::EngineClock;
     double _rate = 1.0;
     bool _paused = false;
     bool _anchored = false;                    // true after reset();
                                                // position()==0 until then
+                                               // (engine path)
     ayt::time::Duration _anchorMediaStart{};   // media time at position 0
     ayt::time::TimePoint _anchorWall{};        // wall clock at last
                                                // resume/reset (engine path)
     ayt::time::Duration _pausedAt{};           // position frozen at
                                                // markPaused()
+    ayt::time::Duration _driftTol =
+        ayt::time::Duration::fromMs(40);       // §9.2 default ±40 ms
 };
 
 } // namespace ayt::video

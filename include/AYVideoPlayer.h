@@ -13,6 +13,7 @@
 // frame queue. Events fire synchronously on the calling thread and must
 // not re-enter the control surface (design.md §10.4, A-12).
 
+#include <AYVideoAudioFrame.h>
 #include <AYVideoMediaInfo.h>
 #include <AYVideoSyncClock.h>
 #include <AYVideoTypes.h>
@@ -25,11 +26,17 @@
 #include <memory>
 #include <string>
 
+namespace ayt::audio
+{
+class AudioEngine;
+}
+
 namespace ayt::video
 {
 
 class DecodeLoop;
 class FrameQueue;
+class AudioQueue;
 struct QueuedFrame;
 
 // ---------------------------------------------------------------------------
@@ -125,6 +132,12 @@ public:
     void setOnStateChanged(std::function<void(PlayerState)> cb) noexcept;
     void setOnEndOfStream(std::function<void()> cb) noexcept;
 
+    // V2: optional AYAudio engine for PCM bridge + AudioMaster sync
+    // (design.md §11). nullptr clears the bridge (EngineClock fallback).
+    // Must be called while Idle/Stopped (or before open); InvalidState
+    // otherwise. The player does not own the engine.
+    VideoResult attachAudioEngine(ayt::audio::AudioEngine* engine) noexcept;
+
     // -- Queries -----------------------------------------------------------
 
     PlayerState state() const noexcept;
@@ -156,6 +169,11 @@ private:
     void startLoop();                          // spawn decode thread
     void teardownPipeline() noexcept;          // stop+join+clear (stop/seek/
                                                // move/dtor path, §8.3)
+    void teardownAudioBridge() noexcept;       // close stream / stop voice
+    bool ensureAudioBridge() noexcept;         // openStream + playStream
+    void pumpAudioToEngine() noexcept;         // AudioQueue → streamPush
+    bool presentDueFrame(VideoFrame& out);     // drift-aware presentation
+    static ayt::time::Duration audioMasterThunk(void* user) noexcept;
 
     PlayerState _state = PlayerState::Idle;
     VideoResult _lastResult = VideoResult::Ok;
@@ -177,12 +195,18 @@ private:
     // Incomplete types are fine here: the destructor is defined in the
     // .cpp (which includes src/FrameQueue.h + src/DecodeLoop.h).
     std::unique_ptr<FrameQueue> _queue;        // SPSC frame ring (§6.3)
+    std::unique_ptr<AudioQueue> _audioQueue;   // SPSC PCM ring (§11)
     std::unique_ptr<DecodeLoop> _loop;         // null while not playing
     std::unique_ptr<QueuedFrame> _held;        // clock-gated presentation
                                                // hold (A-07); null = none
     std::unique_ptr<QueuedFrame> _presented;   // last delivered frame's
                                                // pixel storage (§4.5)
     AYVideoSyncClock _clock;
+
+    // AYAudio PCM bridge (not owned). Handles are Invalid* when inactive.
+    ayt::audio::AudioEngine* _audioEngine = nullptr;
+    uint32_t _audioStreamId = 0;   // ayt::audio::AudioStreamId
+    uint32_t _audioVoice = 0;      // ayt::audio::VoiceHandle
 };
 
 } // namespace ayt::video

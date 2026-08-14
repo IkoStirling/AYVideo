@@ -9,6 +9,7 @@
 // single thread (the decode thread). Codecs are not thread-safe;
 // never drive one decoder from two threads.
 
+#include <AYVideoAudioFrame.h>
 #include <AYVideoFrame.h>
 #include <AYVideoMediaInfo.h>
 #include <AYVideoTypes.h>
@@ -42,15 +43,25 @@ public:
 
     // Feeds one demuxed packet (compressed data). Packets must arrive in
     // stream order. Returns Ok even when no frame is produced yet (codec
-    // delay / B-frames) — frames are collected via dequeueFrame.
+    // delay / B-frames) — frames are collected via dequeueFrame /
+    // dequeueAudioFrame. Audio packets are ignored when decodeAudio was
+    // false at open (V1 video-only).
     virtual VideoResult feedPacket(const VideoPacket& packet) = 0;
 
-    // Dequeues the next decoded frame if one is ready:
+    // Dequeues the next decoded video frame if one is ready:
     //   Ok                 — outFrame filled
     //   Ok + data == nullptr — no frame ready yet (still decoding);
     //                         call again after feeding more packets
     //   EndOfStream        — decoder drained after flush()
     virtual VideoResult dequeueFrame(VideoFrame& outFrame) = 0;
+
+    // Dequeues the next decoded PCM chunk (V2). Default: always Ok +
+    // null (video-only backends). Same lifetime contract as video frames.
+    virtual VideoResult dequeueAudioFrame(AudioPcmFrame& outFrame)
+    {
+        outFrame = AudioPcmFrame{};
+        return VideoResult::Ok;
+    }
 
     // Flushes codec-internal delay (e.g. trailing B-frames) and resets
     // the codec state for a new GOP / seek boundary. After flush, feed

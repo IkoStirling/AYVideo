@@ -282,7 +282,7 @@ struct VideoFrame {
 | INV-08 | `stop()` 后必须关闭两个后端（`wasClosed` 可观测）且可重新 `open()` |
 | INV-09 | SyncClock 未 `reset()`（无锚点）时 `position() == 0`（V0.5 实测 -2.1e9 教训，§17.1） |
 | INV-10 | `markPaused` 冻结 position；`markResumed` 从冻结值续走（不跳变） |
-| INV-11 | `setSource(AudioMaster)` 在 V2 前必须返回 `InvalidState` 且 source 保持 EngineClock |
+| INV-11 | `setSource(AudioMaster)` 在未安装 `AudioMasterFn` 时必须返回 `InvalidState` 且 source 保持 EngineClock；安装 provider 后 Ok |
 | INV-12 | Mock payload 确定性：`payload[0] == 包索引`、`pts == 索引 × 40'000 µs` |
 
 ---
@@ -556,9 +556,9 @@ AYRuntime/AYVideo/
 
 ### V2 A/V Sync + 音频（对齐 §9.2/§11/§15）
 
-- [ ] audio-master 同步 + 漂移窗口（§9.2）
-- [ ] AYAudio PCM 桥 + F32 SPSC 音频队列（§11）
-- [ ] 事件/控制面完整 + ECS VideoSubsystem 挂载（§15）
+- [x] audio-master 同步 + 漂移窗口（§9.2）— `setAudioMasterProvider` + `voicePositionFrames`；`pullFrame` ±40ms 丢帧/等待
+- [x] AYAudio PCM 桥 + F32 SPSC 音频队列（§11）— `attachAudioEngine` / `AudioQueue` / FFmpeg 音频解码→swr→48k F32
+- [ ] 事件/控制面完整 + ECS VideoSubsystem 挂载（§15）— 事件已在 V1；ECS 仍 V2+
 
 ### V3 渲染集成（对齐 §12）
 
@@ -659,6 +659,7 @@ cmake --build D:\Projects\out\build\x64-Debug --target AYVideo_Tests
 
 ## 21. Changelog
 
+- **2026-08-14 (V2 start)**：AudioMaster provider + drift 窗口；AYAudio `voicePositionFrames`；FFmpeg 可选音频解码 + AudioQueue + `attachAudioEngine` PCM 桥。ECS VideoSubsystem 仍 V2+。
 - **2026-08-14 (V1)**：FFmpeg 后端 + DecodeLoop + FrameQueue + `pullFrame` + 事件；544/544 × 3-run；guard 双向验证；A-13/A-14 落地修正与 deferred。
 - **2026-08-13 (V0.5)**：模块创建。公共面 8 头 + 4 后端 + Player 状态机 + SyncClock stub；194/194 PASS。2 个构建期修复：moved-from fixture 空指针 segfault（加 seam + fixture 重构）；SyncClock 无锚点垃圾 position（`_anchored` 门）。guard 硬门禁就位。
 

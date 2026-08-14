@@ -35,6 +35,11 @@ struct MediaInfo
     // codecs (mpeg4 VOL, h264 SPS/PPS in mp4) before the first feed.
     // Empty when the container carries in-band headers only.
     std::vector<uint8_t> videoExtradata;
+
+    // Audio track metadata (V2 PCM bridge, design.md §11). 0 when absent.
+    int32_t audioSampleRate = 0;
+    int32_t audioChannels = 0;
+    std::vector<uint8_t> audioExtradata;
 };
 
 } // namespace ayt::video

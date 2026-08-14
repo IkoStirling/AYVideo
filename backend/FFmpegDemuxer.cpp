@@ -227,6 +227,13 @@ VideoResult FFmpegDemuxer::getMediaInfo(MediaInfo& outInfo) const
         {
             outInfo.audioCodec = codec->name;
         }
+        outInfo.audioSampleRate = par->sample_rate;
+        outInfo.audioChannels = par->ch_layout.nb_channels;
+        if (par->extradata && par->extradata_size > 0)
+        {
+            outInfo.audioExtradata.assign(
+                par->extradata, par->extradata + par->extradata_size);
+        }
     }
     if (ctx->duration != AV_NOPTS_VALUE)
     {

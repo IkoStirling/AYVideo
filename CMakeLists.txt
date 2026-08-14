@@ -1,8 +1,8 @@
 cmake_minimum_required(VERSION 3.12)
 
 project(AYVideo
-    VERSION 1.0.0
-    DESCRIPTION "AYVideo — video playback submodule (V1 FFmpeg minimal playback)"
+    VERSION 2.0.0
+    DESCRIPTION "AYVideo — video playback submodule (V2 A/V sync + AYAudio PCM bridge)"
 )
 
 # =============================================================================
@@ -79,18 +79,12 @@ target_include_directories(${MODULE_NAME} PUBLIC
     $<INSTALL_INTERFACE:interface>
 )
 
-# V0.5 dependency surface is intentionally minimal:
-#   * AYTime — Duration / TimePoint for pts + sync clock (design.md §2.5
-#     normative: AYTime v1.2 value types are the module's time unit).
-#   * No AYIO / AYTask / AYAudio / AYRenderer in V0.5 — the FFmpeg
-#     backend and pipeline wiring (V1+) consume them.
-# Future versions add:
-#   * AYIO       (V1 demux byte-stream reads, design.md §7.2)
-#   * AYTask     (V1 decode worker thread, design.md §8.2)
-#   * AYAudio    (V2 PCM stream bridge, design.md §11)
-#   * AYRenderer (V3 texture upload bridge, design.md §12 — via
-#                 cross-module PR, NOT a direct AYRenderer link in V0.5)
-target_link_libraries(${MODULE_NAME} PUBLIC AYTime)
+# V2 dependency surface:
+#   * AYTime  — Duration / TimePoint (normative)
+#   * AYAudio — PCM bridge openStream/streamPush/playStream (§11)
+# Future:
+#   * AYRenderer (V3 texture upload bridge, §12)
+target_link_libraries(${MODULE_NAME} PUBLIC AYTime AYAudio)
 
 # FFmpeg is a PRIVATE link (design.md §4.1): consumers of AYVideo never
 # need libav* on their link line, and the public headers stay clean.
@@ -151,4 +145,4 @@ else()
         "skipping enable_testing/add_subdirectory for V0.5.")
 endif()
 
-message(STATUS "AYVideo v1.0.0 (V1 FFmpeg minimal playback) — see ${CMAKE_CURRENT_SOURCE_DIR}/design.md")
+message(STATUS "AYVideo v2.0.0 (V2 A/V sync + AYAudio PCM bridge) — see ${CMAKE_CURRENT_SOURCE_DIR}/design.md")

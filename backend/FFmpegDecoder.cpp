@@ -4,8 +4,12 @@
 extern "C" {
 #include <libavcodec/avcodec.h>
 #include <libavutil/avutil.h>
+#include <libavutil/channel_layout.h>
 #include <libavutil/error.h>
+#include <libavutil/opt.h>
 #include <libavutil/pixfmt.h>
+#include <libavutil/samplefmt.h>
+#include <libswresample/swresample.h>
 }
 
 #include <aytime/Duration.h>
@@ -22,7 +26,6 @@ namespace ayt::video
 namespace
 {
 
-// av_err2str is a GNU C compound-literal macro; use av_strerror on MSVC.
 std::string avErrorString(int err)
 {
     char buf[AV_ERROR_MAX_STRING_SIZE];
@@ -33,10 +36,10 @@ std::string avErrorString(int err)
     return buf;
 }
 
-// Microsecond time base for pts rescale (named — MSVC C4576).
 constexpr AVRational kUsTimeBase{1, 1'000'000};
+constexpr int kTargetSampleRate = 48000;
+constexpr int kTargetChannels = 2;
 
-// Map our pixel format to the public surface (design.md §5.6).
 VideoPixelFormat mapPixelFormat(AVPixelFormat fmt)
 {
     switch (fmt)
@@ -53,20 +56,27 @@ VideoPixelFormat mapPixelFormat(AVPixelFormat fmt)
 
 struct FFmpegDecoder::Impl
 {
-    AVCodecContext* codecContext = nullptr;
-    AVFrame* frame = nullptr;
-    AVPacket* packet = nullptr;      // scratch packet for sendPacket
+    AVCodecContext* videoCtx = nullptr;
+    AVCodecContext* audioCtx = nullptr;
+    AVFrame* videoFrame = nullptr;
+    AVFrame* audioFrame = nullptr;
+    AVPacket* packet = nullptr;
+    SwrContext* swr = nullptr;
     bool open = false;
-    bool flushed = false;            // flush() called; EOS after drain
-    bool fedAny = false;             // at least one packet was fed
-    bool drainDone = false;          // receive loop reported EAGAIN post-flush
+    bool decodeAudio = false;
+
+    bool flushed = false;
+    bool fedAny = false;
+    bool drainDone = false;
+
+    bool audioFlushed = false;
+    bool audioFedAny = false;
+    bool audioDrainDone = false;
+
     std::string errorString;
     DecoderOpenParams params;
-    // Packed contiguous pixels for the last dequeued frame (§4.5 / A-05).
-    // AVFrame planes are often non-contiguous (separate allocs with holes
-    // between addresses) — FrameQueue must never memcpy a span across
-    // those holes (ACCESS_VIOLATION on Windows).
     std::vector<uint8_t> packed;
+    std::vector<float> pcm;
 };
 
 FFmpegDecoder::FFmpegDecoder()
@@ -87,8 +97,6 @@ VideoResult FFmpegDecoder::open(const DecoderOpenParams& params)
     }
     if (params.codecName.empty())
     {
-        // Fall back to the codec id carried by the media info path? V1
-        // contract: open by name (design.md §8.1); empty -> InvalidArgument.
         return VideoResult::InvalidArgument;
     }
 
@@ -104,12 +112,11 @@ VideoResult FFmpegDecoder::open(const DecoderOpenParams& params)
     {
         return VideoResult::OutOfMemory;
     }
-    _impl->codecContext = ctx;
+    _impl->videoCtx = ctx;
     _impl->params = params;
+    _impl->decodeAudio = params.decodeAudio && params.media.hasAudio
+                         && !params.media.audioCodec.empty();
 
-    // Build codec parameters from MediaInfo (width/height/extradata) and
-    // apply via avcodec_parameters_to_context — more reliable than setting
-    // ctx fields alone (mpeg4 needs VOL in extradata before get_buffer).
     {
         AVCodecParameters* par = avcodec_parameters_alloc();
         if (!par)
@@ -147,12 +154,7 @@ VideoResult FFmpegDecoder::open(const DecoderOpenParams& params)
         }
         avcodec_parameters_free(&par);
     }
-    ctx->thread_count = 1; // V1: single-thread decode (§4.4 / A-07)
-
-    // V1 timeline: anchor the codec time base to microseconds so
-    // feed/dequeue pts round-trip exactly matches demuxer µs timestamps
-    // (avoids CFR frameRate estimate noise — e.g. probe reporting 27 fps
-    // for a 25 fps synthetic clip, which otherwise yields 37037 µs steps).
+    ctx->thread_count = 1;
     ctx->time_base = kUsTimeBase;
 
     if (avcodec_open2(ctx, codec, nullptr) < 0)
@@ -161,42 +163,135 @@ VideoResult FFmpegDecoder::open(const DecoderOpenParams& params)
         close();
         return VideoResult::DecodeError;
     }
-
-    // Codecs may overwrite time_base during open — restore µs anchor.
     ctx->time_base = kUsTimeBase;
 
-    _impl->frame = av_frame_alloc();
+    if (_impl->decodeAudio)
+    {
+        const AVCodec* aCodec =
+            avcodec_find_decoder_by_name(params.media.audioCodec.c_str());
+        if (!aCodec)
+        {
+            _impl->errorString = "unknown audio codec: " + params.media.audioCodec;
+            close();
+            return VideoResult::UnsupportedFormat;
+        }
+        AVCodecContext* actx = avcodec_alloc_context3(aCodec);
+        if (!actx)
+        {
+            close();
+            return VideoResult::OutOfMemory;
+        }
+        _impl->audioCtx = actx;
+
+        AVCodecParameters* apar = avcodec_parameters_alloc();
+        if (!apar)
+        {
+            close();
+            return VideoResult::OutOfMemory;
+        }
+        apar->codec_type = AVMEDIA_TYPE_AUDIO;
+        apar->codec_id = aCodec->id;
+        apar->sample_rate = params.media.audioSampleRate > 0
+                                ? params.media.audioSampleRate
+                                : kTargetSampleRate;
+        const int ch = params.media.audioChannels > 0
+                           ? params.media.audioChannels
+                           : 1;
+        av_channel_layout_default(&apar->ch_layout, ch);
+        if (!params.media.audioExtradata.empty())
+        {
+            const int size = static_cast<int>(params.media.audioExtradata.size());
+            apar->extradata = static_cast<uint8_t*>(
+                av_malloc(static_cast<size_t>(size) + AV_INPUT_BUFFER_PADDING_SIZE));
+            if (!apar->extradata)
+            {
+                avcodec_parameters_free(&apar);
+                close();
+                return VideoResult::OutOfMemory;
+            }
+            std::memcpy(apar->extradata, params.media.audioExtradata.data(),
+                        static_cast<size_t>(size));
+            std::memset(apar->extradata + size, 0, AV_INPUT_BUFFER_PADDING_SIZE);
+            apar->extradata_size = size;
+        }
+        if (avcodec_parameters_to_context(actx, apar) < 0)
+        {
+            avcodec_parameters_free(&apar);
+            _impl->errorString = "audio avcodec_parameters_to_context failed";
+            close();
+            return VideoResult::DecodeError;
+        }
+        avcodec_parameters_free(&apar);
+        actx->thread_count = 1;
+        actx->time_base = kUsTimeBase;
+        if (avcodec_open2(actx, aCodec, nullptr) < 0)
+        {
+            _impl->errorString = "audio avcodec_open2 failed";
+            close();
+            return VideoResult::DecodeError;
+        }
+        actx->time_base = kUsTimeBase;
+    }
+
+    _impl->videoFrame = av_frame_alloc();
     _impl->packet = av_packet_alloc();
-    if (!_impl->frame || !_impl->packet)
+    if (!_impl->videoFrame || !_impl->packet)
     {
         close();
         return VideoResult::OutOfMemory;
+    }
+    if (_impl->decodeAudio)
+    {
+        _impl->audioFrame = av_frame_alloc();
+        if (!_impl->audioFrame)
+        {
+            close();
+            return VideoResult::OutOfMemory;
+        }
     }
 
     _impl->open = true;
     _impl->flushed = false;
     _impl->fedAny = false;
     _impl->drainDone = false;
+    _impl->audioFlushed = false;
+    _impl->audioFedAny = false;
+    _impl->audioDrainDone = false;
     return VideoResult::Ok;
 }
 
 void FFmpegDecoder::close() noexcept
 {
+    if (_impl->swr)
+    {
+        swr_free(&_impl->swr);
+    }
     if (_impl->packet)
     {
         av_packet_free(&_impl->packet);
     }
-    if (_impl->frame)
+    if (_impl->videoFrame)
     {
-        av_frame_free(&_impl->frame);
+        av_frame_free(&_impl->videoFrame);
     }
-    if (_impl->codecContext)
+    if (_impl->audioFrame)
     {
-        avcodec_free_context(&_impl->codecContext);
+        av_frame_free(&_impl->audioFrame);
+    }
+    if (_impl->videoCtx)
+    {
+        avcodec_free_context(&_impl->videoCtx);
+    }
+    if (_impl->audioCtx)
+    {
+        avcodec_free_context(&_impl->audioCtx);
     }
     _impl->packed.clear();
     _impl->packed.shrink_to_fit();
+    _impl->pcm.clear();
+    _impl->pcm.shrink_to_fit();
     _impl->open = false;
+    _impl->decodeAudio = false;
 }
 
 bool FFmpegDecoder::isOpen() const noexcept
@@ -211,54 +306,69 @@ VideoResult FFmpegDecoder::feedPacket(const VideoPacket& packet)
         return VideoResult::NotInitialized;
     }
 
-    if (!packet.isVideo)
-    {
-        // V1 pipeline is video-only (design.md §8.1, decodeAudio=false);
-        // audio packets are dropped here, never sent to the video codec.
-        return VideoResult::Ok;
-    }
-
-    av_packet_unref(_impl->packet);
-    if (packet.data)
-    {
-        // Real data resumes the codec after a flush (seek/stop flush
-        // sequence, §8.3): leave the drain state so dequeueFrame reports
-        // Ok + null ("no frame yet") instead of EndOfStream.
-        _impl->flushed = false;
-        _impl->drainDone = false;
-
+    auto sendTo = [&](AVCodecContext* ctx, bool isVideo) -> VideoResult {
+        if (!ctx)
+        {
+            return VideoResult::Ok;
+        }
         av_packet_unref(_impl->packet);
-        if (av_new_packet(_impl->packet, static_cast<int>(packet.size)) < 0)
+        if (packet.data)
         {
-            return VideoResult::OutOfMemory;
-        }
-        std::memcpy(_impl->packet->data, packet.data, packet.size);
-        _impl->packet->pts = av_rescale_q(
-            packet.pts.toUs(), kUsTimeBase,
-            _impl->codecContext->time_base);
-
-        const int err = avcodec_send_packet(_impl->codecContext, _impl->packet);
-        if (err == AVERROR(EAGAIN))
-        {
-            // Caller must dequeueFrame then retry the same packet
-            // (design.md §5.4 QueueFull; DecodeLoop handles the retry).
+            if (isVideo)
+            {
+                _impl->flushed = false;
+                _impl->drainDone = false;
+            }
+            else
+            {
+                _impl->audioFlushed = false;
+                _impl->audioDrainDone = false;
+            }
+            if (av_new_packet(_impl->packet, static_cast<int>(packet.size)) < 0)
+            {
+                return VideoResult::OutOfMemory;
+            }
+            std::memcpy(_impl->packet->data, packet.data, packet.size);
+            _impl->packet->pts = av_rescale_q(
+                packet.pts.toUs(), kUsTimeBase, ctx->time_base);
+            const int err = avcodec_send_packet(ctx, _impl->packet);
             av_packet_unref(_impl->packet);
-            return VideoResult::QueueFull;
+            if (err == AVERROR(EAGAIN))
+            {
+                return VideoResult::QueueFull;
+            }
+            if (err < 0)
+            {
+                _impl->errorString = avErrorString(err);
+                return VideoResult::DecodeError;
+            }
+            if (isVideo)
+            {
+                _impl->fedAny = true;
+            }
+            else
+            {
+                _impl->audioFedAny = true;
+            }
+            return VideoResult::Ok;
         }
-        if (err < 0)
+        // Null packet -> drain.
+        if (avcodec_send_packet(ctx, nullptr) < 0)
         {
-            _impl->errorString = avErrorString(err);
             return VideoResult::DecodeError;
         }
-        _impl->fedAny = true;
         return VideoResult::Ok;
-    }
+    };
 
-    // Null packet -> flush the decoder (ffmpeg convention).
-    if (avcodec_send_packet(_impl->codecContext, nullptr) < 0)
+    if (packet.isVideo)
     {
-        return VideoResult::DecodeError;
+        return sendTo(_impl->videoCtx, true);
     }
+    if (_impl->decodeAudio && _impl->audioCtx)
+    {
+        return sendTo(_impl->audioCtx, false);
+    }
+    // V1 video-only: drop audio packets.
     return VideoResult::Ok;
 }
 
@@ -272,19 +382,18 @@ VideoResult FFmpegDecoder::dequeueFrame(VideoFrame& outFrame)
     outFrame = VideoFrame{};
     if (!_impl->fedAny)
     {
-        // design.md §6.2: Ok + null data = "no frame ready yet".
         return VideoResult::Ok;
     }
 
-    av_frame_unref(_impl->frame);
-    const int err = avcodec_receive_frame(_impl->codecContext, _impl->frame);
+    av_frame_unref(_impl->videoFrame);
+    const int err = avcodec_receive_frame(_impl->videoCtx, _impl->videoFrame);
     if (err == AVERROR(EAGAIN))
     {
         if (_impl->flushed && _impl->drainDone)
         {
-            return VideoResult::EndOfStream; // flush drained (design.md §6.2)
+            return VideoResult::EndOfStream;
         }
-        return VideoResult::Ok; // no frame ready yet
+        return VideoResult::Ok;
     }
     if (err == AVERROR_EOF)
     {
@@ -296,18 +405,12 @@ VideoResult FFmpegDecoder::dequeueFrame(VideoFrame& outFrame)
         return VideoResult::DecodeError;
     }
 
-    // Frame ready. Pack planes into a contiguous buffer owned by this
-    // decoder (valid until the next dequeueFrame/flush — §4.5). Never
-    // hand AVFrame plane pointers to callers: plane addresses can be
-    // non-contiguous with unmapped holes between them; a span memcpy
-    // across that hole is ACCESS_VIOLATION (FrameQueue::push).
-    const auto* f = _impl->frame;
+    const auto* f = _impl->videoFrame;
     outFrame.width = f->width;
     outFrame.height = f->height;
-    outFrame.format = mapPixelFormat(
-        static_cast<AVPixelFormat>(f->format));
+    outFrame.format = mapPixelFormat(static_cast<AVPixelFormat>(f->format));
     outFrame.pts = ayt::time::Duration::fromUs(av_rescale_q(
-        f->pts, _impl->codecContext->time_base, kUsTimeBase));
+        f->pts, _impl->videoCtx->time_base, kUsTimeBase));
     outFrame.planeOffset[0] = outFrame.planeOffset[1] =
         outFrame.planeOffset[2] = 0;
 
@@ -331,8 +434,7 @@ VideoResult FFmpegDecoder::dequeueFrame(VideoFrame& outFrame)
         const int ch = (h + 1) / 2;
         const size_t yBytes = static_cast<size_t>(w) * static_cast<size_t>(h);
         const size_t uBytes = static_cast<size_t>(cw) * static_cast<size_t>(ch);
-        const size_t vBytes = uBytes;
-        _impl->packed.resize(yBytes + uBytes + vBytes);
+        _impl->packed.resize(yBytes + uBytes + uBytes);
         uint8_t* dst = _impl->packed.data();
         dst = copyPlaneRows(dst, f->data[0], f->linesize[0], h, w);
         outFrame.planeOffset[1] = static_cast<uint32_t>(dst - _impl->packed.data());
@@ -364,7 +466,6 @@ VideoResult FFmpegDecoder::dequeueFrame(VideoFrame& outFrame)
     }
     else if (f->data[0] && f->width > 0 && f->height > 0)
     {
-        // Packed RGB / unknown single-plane: copy luma/plane0 tightly.
         const int w = f->width;
         const int h = f->height;
         const int bpp =
@@ -387,24 +488,113 @@ VideoResult FFmpegDecoder::dequeueFrame(VideoFrame& outFrame)
     return VideoResult::Ok;
 }
 
+VideoResult FFmpegDecoder::dequeueAudioFrame(AudioPcmFrame& outFrame)
+{
+    outFrame = AudioPcmFrame{};
+    if (!_impl->open || !_impl->decodeAudio || !_impl->audioCtx)
+    {
+        return VideoResult::Ok;
+    }
+    if (!_impl->audioFedAny)
+    {
+        return VideoResult::Ok;
+    }
+
+    av_frame_unref(_impl->audioFrame);
+    const int err = avcodec_receive_frame(_impl->audioCtx, _impl->audioFrame);
+    if (err == AVERROR(EAGAIN))
+    {
+        if (_impl->audioFlushed && _impl->audioDrainDone)
+        {
+            return VideoResult::EndOfStream;
+        }
+        return VideoResult::Ok;
+    }
+    if (err == AVERROR_EOF)
+    {
+        return VideoResult::EndOfStream;
+    }
+    if (err < 0)
+    {
+        _impl->errorString = avErrorString(err);
+        return VideoResult::DecodeError;
+    }
+
+    AVFrame* f = _impl->audioFrame;
+    // (Re)configure swr when input layout changes.
+    AVChannelLayout outLayout{};
+    av_channel_layout_default(&outLayout, kTargetChannels);
+    if (!_impl->swr)
+    {
+        if (swr_alloc_set_opts2(&_impl->swr,
+                               &outLayout, AV_SAMPLE_FMT_FLT, kTargetSampleRate,
+                               &f->ch_layout,
+                               static_cast<AVSampleFormat>(f->format),
+                               f->sample_rate,
+                               0, nullptr) < 0
+            || swr_init(_impl->swr) < 0)
+        {
+            av_channel_layout_uninit(&outLayout);
+            _impl->errorString = "swr_init failed";
+            return VideoResult::DecodeError;
+        }
+    }
+    av_channel_layout_uninit(&outLayout);
+
+    const int outSamples = swr_get_out_samples(_impl->swr, f->nb_samples);
+    if (outSamples <= 0)
+    {
+        return VideoResult::Ok;
+    }
+    _impl->pcm.resize(static_cast<size_t>(outSamples) * kTargetChannels);
+    uint8_t* outPlanes[1] = {
+        reinterpret_cast<uint8_t*>(_impl->pcm.data())};
+    const int converted = swr_convert(_impl->swr, outPlanes, outSamples,
+                                      const_cast<const uint8_t**>(f->extended_data),
+                                      f->nb_samples);
+    if (converted < 0)
+    {
+        _impl->errorString = avErrorString(converted);
+        return VideoResult::DecodeError;
+    }
+    if (converted == 0)
+    {
+        return VideoResult::Ok;
+    }
+
+    outFrame.data = _impl->pcm.data();
+    outFrame.frameCount = static_cast<uint32_t>(converted);
+    outFrame.channels = static_cast<uint16_t>(kTargetChannels);
+    outFrame.sampleRate = static_cast<uint32_t>(kTargetSampleRate);
+    outFrame.pts = ayt::time::Duration::fromUs(av_rescale_q(
+        f->pts, _impl->audioCtx->time_base, kUsTimeBase));
+    return VideoResult::Ok;
+}
+
 VideoResult FFmpegDecoder::flush()
 {
     if (!_impl->open)
     {
         return VideoResult::NotInitialized;
     }
-    // Seek / stop / replay restart (design.md §8.3): reset codec state
-    // so subsequent feedPacket calls are accepted. EOS draining uses a
-    // null feedPacket (avcodec_send_packet nullptr), not this path —
-    // sending nullptr here left the codec in drain mode and made the
-    // next play() feed return DecodeError.
-    if (_impl->codecContext)
+    if (_impl->videoCtx)
     {
-        avcodec_flush_buffers(_impl->codecContext);
+        avcodec_flush_buffers(_impl->videoCtx);
+    }
+    if (_impl->audioCtx)
+    {
+        avcodec_flush_buffers(_impl->audioCtx);
+    }
+    if (_impl->swr)
+    {
+        swr_free(&_impl->swr);
     }
     _impl->flushed = false;
     _impl->drainDone = false;
     _impl->fedAny = false;
+    _impl->audioFlushed = false;
+    _impl->audioDrainDone = false;
+    _impl->audioFedAny = false;
     return VideoResult::Ok;
 }
 

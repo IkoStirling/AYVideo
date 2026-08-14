@@ -1,5 +1,6 @@
 #include "DecodeLoop.h"
 
+#include "AudioQueue.h"
 #include "FrameQueue.h"
 
 #include <cstdint>
@@ -8,10 +9,11 @@ namespace ayt::video
 {
 
 DecodeLoop::DecodeLoop(IAYVideoDemuxer& demuxer, IAYVideoDecoder& decoder,
-                       FrameQueue& queue)
+                       FrameQueue& videoQueue, AudioQueue* audioQueue)
     : _demuxer(demuxer)
     , _decoder(decoder)
-    , _queue(queue)
+    , _videoQueue(videoQueue)
+    , _audioQueue(audioQueue)
 {
 }
 
@@ -49,8 +51,9 @@ void DecodeLoop::run() noexcept
 
     VideoPacket pkt;
     VideoFrame frame;
+    AudioPcmFrame audio;
 
-    // Drain decode output into the queue until Ok+null / EOS / error /
+    // Drain decode output into the queues until Ok+null / EOS / error /
     // cancel. Returns false when the outer loop must stop.
     auto pumpFrames = [&](bool& eosSeen) -> bool {
         for (;;)
@@ -62,7 +65,7 @@ void DecodeLoop::run() noexcept
             const VideoResult fr = _decoder.dequeueFrame(frame);
             if (fr == VideoResult::Ok && frame.data)
             {
-                _queue.push(frame); // blocking backpressure (§6.3)
+                _videoQueue.push(frame); // blocking backpressure (§6.3)
                 continue;
             }
             if (fr == VideoResult::EndOfStream)
@@ -75,13 +78,39 @@ void DecodeLoop::run() noexcept
                 _failure.store(fr);
                 return false;
             }
-            // Ok + null: no frame ready yet (design.md §6.2).
+            // Ok + null video: drain any pending audio, then yield.
+            if (_audioQueue)
+            {
+                for (;;)
+                {
+                    if (_cancel.load())
+                    {
+                        return false;
+                    }
+                    const VideoResult ar = _decoder.dequeueAudioFrame(audio);
+                    if (ar == VideoResult::Ok && audio.data && audio.frameCount > 0)
+                    {
+                        _audioQueue->push(audio);
+                        continue;
+                    }
+                    if (ar == VideoResult::EndOfStream)
+                    {
+                        // Audio EOS alone does not end the loop — video
+                        // may still be draining. Treat as "no more audio".
+                        break;
+                    }
+                    if (ar != VideoResult::Ok)
+                    {
+                        _failure.store(ar);
+                        return false;
+                    }
+                    break; // Ok + null
+                }
+            }
             return true;
         }
     };
 
-    // Feed one demuxed packet, retrying on QueueFull (EAGAIN) after a
-    // decode drain. Returns false when the outer loop must stop.
     auto feedOne = [&](const VideoPacket& packet) -> bool {
         for (;;)
         {
@@ -101,7 +130,7 @@ void DecodeLoop::run() noexcept
                     }
                     return false;
                 }
-                continue; // retry the same packet
+                continue;
             }
             if (fr != VideoResult::Ok)
             {
@@ -140,11 +169,15 @@ void DecodeLoop::run() noexcept
 
         if (r == VideoResult::EndOfStream)
         {
-            // §8.3 EOS drain: null packet enters FFmpeg drain mode;
-            // Mock backends ignore payload and need flush() for EOS.
             VideoPacket end{};
             end.isVideo = true;
             (void)_decoder.feedPacket(end);
+            if (_audioQueue)
+            {
+                VideoPacket aend{};
+                aend.isVideo = false;
+                (void)_decoder.feedPacket(aend);
+            }
             bool eosSeen = false;
             if (!pumpFrames(eosSeen) && eosSeen)
             {
@@ -161,7 +194,6 @@ void DecodeLoop::run() noexcept
             break;
         }
 
-        // Demux error mid-stream (e.g. container corruption).
         _failure.store(r);
         break;
     }

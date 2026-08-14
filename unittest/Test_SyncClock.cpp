@@ -1,9 +1,9 @@
-// Test_SyncClock.cpp — V0.5 stub.
+// Test_SyncClock.cpp — engine-clock + V2 AudioMaster contract.
 //
 // Asserts the sync clock contract (design.md §9): engine-clock path
 // with an injectable now-provider for determinism; position anchoring
 // at reset; pause/resume continuity; rate rejection for out-of-range
-// values; AudioMaster gated until V2.
+// values; AudioMaster requires a provider (§9.2 / §11).
 
 #include <cstdint>
 
@@ -30,6 +30,19 @@ struct FakeNow
 };
 
 std::int64_t FakeNow::us = 0;
+
+// Fake audio-master head (µs of media time).
+struct FakeAudio
+{
+    static std::int64_t us;
+
+    static ayt::time::Duration position(void* /*user*/) noexcept
+    {
+        return ayt::time::Duration::fromUs(us);
+    }
+};
+
+std::int64_t FakeAudio::us = 0;
 
 } // namespace
 
@@ -107,16 +120,46 @@ TEST_SUITE(SyncClockSuite)
                      static_cast<int>(VideoResult::Ok));
     }
 
-    TEST_CASE(SyncClockAudioMasterGatedUntilV2) {
-        // design.md §9.2: AudioMaster is a V2 feature; the engine-clock
-        // fallback applies until then.
+    TEST_CASE(SyncClockAudioMasterRequiresProvider) {
+        // Without a provider, AudioMaster stays gated (INV-11 spirit).
         AYVideoSyncClock clk(&FakeNow::tick);
         CHECK_INT_EQ(static_cast<int>(clk.setSource(SyncSource::AudioMaster)),
                      static_cast<int>(VideoResult::InvalidState));
         CHECK_INT_EQ(static_cast<int>(clk.source()),
                      static_cast<int>(SyncSource::EngineClock));
+    }
+
+    TEST_CASE(SyncClockAudioMasterUsesProvider) {
+        FakeAudio::us = 0;
+        AYVideoSyncClock clk(&FakeNow::tick);
+        clk.setAudioMasterProvider(&FakeAudio::position);
+        CHECK_INT_EQ(static_cast<int>(clk.setSource(SyncSource::AudioMaster)),
+                     static_cast<int>(VideoResult::Ok));
+        CHECK_INT_EQ(static_cast<int>(clk.source()),
+                     static_cast<int>(SyncSource::AudioMaster));
+
+        FakeAudio::us = 123'456;
+        CHECK_INT_EQ(clk.position().toUs(), 123'456);
+
+        // Pause freezes at the audio head; provider can keep moving.
+        clk.markPaused();
+        FakeAudio::us = 999'999;
+        CHECK_INT_EQ(clk.position().toUs(), 123'456);
+        clk.markResumed();
+        CHECK_INT_EQ(clk.position().toUs(), 999'999);
+
+        // Switching back to engine clock works.
         CHECK_INT_EQ(static_cast<int>(clk.setSource(SyncSource::EngineClock)),
                      static_cast<int>(VideoResult::Ok));
+        CHECK_INT_EQ(static_cast<int>(clk.source()),
+                     static_cast<int>(SyncSource::EngineClock));
+    }
+
+    TEST_CASE(SyncClockDriftToleranceDefault) {
+        AYVideoSyncClock clk;
+        CHECK_INT_EQ(clk.driftTolerance().toMs(), 40);
+        clk.setDriftTolerance(ayt::time::Duration::fromMs(20));
+        CHECK_INT_EQ(clk.driftTolerance().toMs(), 20);
     }
 
 TEST_SUITE_END

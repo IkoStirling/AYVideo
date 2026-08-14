@@ -5,12 +5,10 @@
 // A-03: AYTask is a short-task job pool with no persistent-thread
 // semantics, so V1 uses std::thread — see design.md §20).
 //
-// Loop body: readNextPacket → feedPacket → dequeueFrame → push into the
-// SPSC FrameQueue (blocking backpressure). On demux EndOfStream: flush
-// the decoder, drain remaining frames, mark clean end. On cancel
-// (stop/seek): exit at the next safe point. Backends are referenced,
-// not owned — the player owns them and must join the loop before
-// closing them (§8.3 flush sequence).
+// Loop body: readNextPacket → feedPacket → dequeueFrame[/Audio] → push
+// into the SPSC FrameQueue (blocking) and optional AudioQueue (drop-
+// oldest on overflow, §11). On demux EndOfStream: flush the decoder,
+// drain remaining frames, mark clean end.
 //
 // Thread contract (design.md §4.4/§14): the decode thread is the ONLY
 // thread that touches the demuxer/decoder while the loop runs.
@@ -26,12 +24,15 @@ namespace ayt::video
 {
 
 class FrameQueue;
+class AudioQueue;
 
 class DecodeLoop
 {
 public:
+    // `audioQueue` may be null (video-only). When non-null the decoder
+    // must have been opened with decodeAudio=true.
     DecodeLoop(IAYVideoDemuxer& demuxer, IAYVideoDecoder& decoder,
-               FrameQueue& queue);
+               FrameQueue& videoQueue, AudioQueue* audioQueue = nullptr);
     ~DecodeLoop();
 
     DecodeLoop(const DecodeLoop&) = delete;
@@ -42,11 +43,8 @@ public:
     void join() noexcept;
 
     bool running() const noexcept { return _running.load(); }
-    // True after the loop reached demux EOS + decoder drained.
     bool endedCleanly() const noexcept { return _endedClean.load(); }
-    // The failure that stopped the loop (Ok = none; e.g. DecodeError).
     VideoResult failure() const noexcept { return _failure.load(); }
-    // True when the loop exited (cleanly or not).
     bool finished() const noexcept { return _finished.load(); }
 
 private:
@@ -54,7 +52,8 @@ private:
 
     IAYVideoDemuxer& _demuxer;
     IAYVideoDecoder& _decoder;
-    FrameQueue& _queue;
+    FrameQueue& _videoQueue;
+    AudioQueue* _audioQueue = nullptr;
 
     std::thread _thread;
     std::atomic<bool> _cancel{false};

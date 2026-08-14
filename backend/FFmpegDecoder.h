@@ -1,16 +1,15 @@
 #pragma once
-// FFmpegDecoder.h — libavcodec video decoder (V1).
+// FFmpegDecoder.h — libavcodec video (+ optional audio) decoder.
 //
-// design.md §8: codec decode via avcodec. Single-threaded per instance
-// (§4.4 — ffmpeg decoders are not thread-safe). Output frames follow
-// the §6.2 contract: `dequeueFrame` returns Ok + null data when no
-// frame is ready, and EndOfStream after flush().
-//
-// Frame pixel data is owned by the decoder (internal frame pool,
-// §4.5): valid until the next dequeueFrame/flush call.
+// design.md §8 / §11: codec decode via avcodec. Single-threaded per
+// instance (§4.4). When DecoderOpenParams::decodeAudio is true and the
+// MediaInfo carries an audio track, an AAC (or named) audio codec is
+// opened alongside video; PCM is resampled to interleaved F32 @ 48 kHz
+// for the AYAudio bridge.
 //
 // The header is ffmpeg-free (PIMPL) — G-01 discipline.
 
+#include <AYVideoAudioFrame.h>
 #include <AYVideoFrame.h>
 #include <AYVideoMediaInfo.h>
 #include <AYVideoTypes.h>
@@ -36,9 +35,9 @@ public:
     bool isOpen() const noexcept override;
     VideoResult feedPacket(const VideoPacket& packet) override;
     VideoResult dequeueFrame(VideoFrame& outFrame) override;
+    VideoResult dequeueAudioFrame(AudioPcmFrame& outFrame) override;
     VideoResult flush() override;
 
-    // Diagnostics (tests): last av* error string, or "".
     const char* lastErrorString() const noexcept;
 
 private:

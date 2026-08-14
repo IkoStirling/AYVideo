@@ -41,6 +41,7 @@ target_link_libraries(${TEST_TARGET} PRIVATE
     AYVideo
     AYTest
     AYTime
+    AYAudio
 )
 
 # V1 FFmpeg backends (design.md §7/§8) — Q7a synthetic-byte stub:
@@ -54,6 +55,7 @@ if(AYVIDEO_HAS_FFMPEG)
         Test_FFmpegDecoder.cpp   # FFmpegDecoder feed/dequeue/flush/EOS
         Test_PlayerPlayback.cpp  # full pipeline + clock-gated presentation
         Test_DecodeThread.cpp    # §16.3 stress: 400 frames x 3 rounds
+        Test_AudioBridge.cpp     # V2 attachAudioEngine smoke
     )
     target_link_libraries(${TEST_TARGET} PRIVATE AYVideo_FFmpeg)
 endif()
