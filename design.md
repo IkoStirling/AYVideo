@@ -576,7 +576,11 @@ AYRuntime/AYVideo/
 - [x] 字幕轨 discovery（slice-3）：`SubtitleTrackInfo` / player 选择 API；Mock + FFmpeg 枚举；无 cue 渲染
 - [x] 多轨选择（slice-4）：`Video/AudioTrackInfo` + deferred `setActive*`（play/seek 应用）；Mock 双音轨 UT
 - [x] 内存压力（slice-5）：FrameQueue `DropOldest` + `size`/`dropped`；`queueStats`；AudioQueue drop 计数
-- [ ] 双向 seek 精修
+- [x] 双向 seek 精修（slice-6）：forward prefer non-BACKWARD `av_seek_frame` + fallback；forward→backward UT
+
+### V5+（对齐 §3 表）
+
+- [ ] 网络流 / 缓冲水位 / 断流重连
 
 ---
 
@@ -667,6 +671,7 @@ cmake --build D:\Projects\out\build\x64-Debug --target AYVideo_Tests
 
 ## 21. Changelog
 
+- **2026-08-14 (V4 bidir seek slice-6)**：FFmpegDemuxer forward seek 优先非 BACKWARD，失败回退；`PlayerSeekForwardThenBackward`。
 - **2026-08-14 (V4 memory slice-5)**：FrameQueue optional `DropOldest` + `size`/`dropped`；AudioQueue drop 计数；`player.queueStats()`。
 - **2026-08-14 (V4 multi-track slice-4)**：`AYVideoTrack` + MediaInfo 音视频轨列表；player deferred `setActive*`；FFmpeg/Mock `setActiveStreamIndices`。
 - **2026-08-14 (V4 subtitle slice-3)**：`AYVideoSubtitle` + MediaInfo 轨列表；player `setActiveSubtitleTrack`（选择-only）；Mock/FFmpeg 枚举；无 cue 渲染。

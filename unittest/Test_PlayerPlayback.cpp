@@ -224,6 +224,47 @@ TEST_SUITE(PlayerPlaybackSuite)
                      static_cast<int>(VideoResult::Ok));
     }
 
+    TEST_CASE(PlayerSeekForwardThenBackward) {
+        // V4 bidirectional polish: forward seek then backward seek, each
+        // respecting the presentation floor (±1 CFR frame).
+        PlaybackFixture fx;
+        CHECK_INT_EQ(static_cast<int>(fx.player.play()),
+                     static_cast<int>(VideoResult::Ok));
+        VideoFrame f;
+        (void)fx.advanceAndPull(40'000, f);
+        (void)fx.advanceAndPull(40'000, f);
+
+        CHECK_INT_EQ(static_cast<int>(fx.player.pause()),
+                     static_cast<int>(VideoResult::Ok));
+        CHECK_INT_EQ(static_cast<int>(
+                         fx.player.seek(ayt::time::Duration::fromUs(200'000))),
+                     static_cast<int>(VideoResult::Ok));
+        CHECK_INT_EQ(static_cast<int>(fx.player.play()),
+                     static_cast<int>(VideoResult::Ok));
+        CHECK_INT_EQ(static_cast<int>(pullWithRetry(fx.player, f, 4000)),
+                     static_cast<int>(VideoResult::Ok));
+        CHECK_TRUE(f.data != nullptr);
+        CHECK_TRUE(f.pts.toUs() >= 200'000);
+        CHECK_TRUE(f.pts.toUs() - 200'000 <= 40'000);
+
+        CHECK_INT_EQ(static_cast<int>(fx.player.pause()),
+                     static_cast<int>(VideoResult::Ok));
+        CHECK_INT_EQ(static_cast<int>(
+                         fx.player.seek(ayt::time::Duration::fromUs(80'000))),
+                     static_cast<int>(VideoResult::Ok));
+        CHECK_INT_EQ(static_cast<int>(fx.player.play()),
+                     static_cast<int>(VideoResult::Ok));
+        CHECK_INT_EQ(static_cast<int>(pullWithRetry(fx.player, f, 4000)),
+                     static_cast<int>(VideoResult::Ok));
+        CHECK_TRUE(f.data != nullptr);
+        CHECK_TRUE(f.pts.toUs() >= 80'000);
+        const std::int64_t d = f.pts.toUs() >= 80'000 ? f.pts.toUs() - 80'000
+                                                      : 80'000 - f.pts.toUs();
+        CHECK_TRUE(d <= 40'000);
+        CHECK_INT_EQ(static_cast<int>(fx.player.stop()),
+                     static_cast<int>(VideoResult::Ok));
+    }
+
     TEST_CASE(PlayerSeekDuringPlaybackRestarts) {
         PlaybackFixture fx;
         CHECK_INT_EQ(static_cast<int>(fx.player.play()),

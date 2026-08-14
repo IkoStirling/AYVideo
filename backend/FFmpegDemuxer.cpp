@@ -74,6 +74,8 @@ struct FFmpegDemuxer::Impl
     bool open = false;
     std::string errorString;         // last av error text (diagnostics)
     DemuxerOpenParams params;
+    // Last video packet pts (µs) for V4 bidirectional seek direction.
+    std::int64_t lastVideoPtsUs = -1;
 };
 
 FFmpegDemuxer::FFmpegDemuxer()
@@ -165,6 +167,7 @@ void FFmpegDemuxer::close() noexcept
     }
     _impl->videoStreamIndex = -1;
     _impl->audioStreamIndex = -1;
+    _impl->lastVideoPtsUs = -1;
     _impl->open = false;
 }
 
@@ -397,6 +400,10 @@ VideoResult FFmpegDemuxer::readNextPacket(VideoPacket& outPacket)
             avRescaleUs(_impl->packet->pts != AV_NOPTS_VALUE ? _impl->packet->pts : 0, tb));
         outPacket.dts = ayt::time::Duration::fromUs(
             avRescaleUs(_impl->packet->dts != AV_NOPTS_VALUE ? _impl->packet->dts : 0, tb));
+        if (isVideo)
+        {
+            _impl->lastVideoPtsUs = outPacket.pts.toUs();
+        }
         return VideoResult::Ok;
     }
 }
@@ -412,15 +419,32 @@ VideoResult FFmpegDemuxer::seek(const ayt::time::Duration& target)
         return VideoResult::UnsupportedFormat; // design.md §7.3
     }
 
-    // av_seek_frame to the target time (µs, AV_TIME_BASE). V1 contract:
-    // keyframe-level seek; frame-exact positioning lands in V4.
+    // V4 bidirectional polish: when seeking at/after the last read
+    // video pts, try a non-BACKWARD seek first (less GOP rewind). Fall
+    // back to BACKWARD on failure. Player still applies _minPresentPts.
     const std::int64_t targetUs = target.toUs();
-    if (av_seek_frame(_impl->formatContext, -1, targetUs, AVSEEK_FLAG_BACKWARD) < 0)
+    const bool preferForward =
+        _impl->lastVideoPtsUs >= 0 && targetUs >= _impl->lastVideoPtsUs;
+    int flags = preferForward ? 0 : AVSEEK_FLAG_BACKWARD;
+    if (av_seek_frame(_impl->formatContext, -1, targetUs, flags) < 0)
     {
-        _impl->errorString = "av_seek_frame failed";
-        return VideoResult::DemuxError;
+        if (preferForward)
+        {
+            flags = AVSEEK_FLAG_BACKWARD;
+            if (av_seek_frame(_impl->formatContext, -1, targetUs, flags) < 0)
+            {
+                _impl->errorString = "av_seek_frame failed";
+                return VideoResult::DemuxError;
+            }
+        }
+        else
+        {
+            _impl->errorString = "av_seek_frame failed";
+            return VideoResult::DemuxError;
+        }
     }
     avformat_flush(_impl->formatContext);
+    _impl->lastVideoPtsUs = -1; // unknown until next read
     return VideoResult::Ok;
 }
 
