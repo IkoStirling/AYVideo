@@ -171,4 +171,14 @@ else()
         "skipping enable_testing/add_subdirectory for V0.5.")
 endif()
 
-message(STATUS "AYVideo v3.0.0 (V3 frame texture + color convert) — see ${CMAKE_CURRENT_SOURCE_DIR}/design.md")
+# V3 engine demo (design.md §12) — Win32 + GameLoop + RendererSubSystem
+# textured quad driven by RendererVideoFrameTexture.
+if(EXISTS "${CMAKE_CURRENT_SOURCE_DIR}/demo/CMakeLists.txt")
+    if(TARGET AYRenderer)
+        add_subdirectory(demo)
+    else()
+        message(STATUS "AYVideo — demo skipped (AYRenderer target missing)")
+    endif()
+endif()
+
+message(STATUS "AYVideo v3.0.0 (V3 GPU frame texture + engine demo) — see ${CMAKE_CURRENT_SOURCE_DIR}/design.md")
