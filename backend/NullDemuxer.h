@@ -19,7 +19,8 @@ public:
     bool isOpen() const noexcept override;
     VideoResult getMediaInfo(MediaInfo& outInfo) const override;
     VideoResult readNextPacket(VideoPacket& outPacket) override;
-    VideoResult seek(const ayt::time::Duration& target) override;
+    VideoResult seek(const ayt::time::Duration& target,
+                     bool keyframeOnly = true) override;
 
 private:
     bool _open = false;

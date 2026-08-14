@@ -27,6 +27,7 @@
 #include <functional>
 #include <memory>
 #include <string>
+#include <chrono>
 
 namespace ayt::audio
 {
@@ -100,12 +101,31 @@ public:
     // Stopped.
     VideoResult stop();
 
-    // Absolute seek. Synchronous dwell with the §8.3 flush sequence
-    // (join decode thread -> clear queue -> decoder flush -> demuxer
-    // keyframe seek -> restart when previously playing). V4: frames with
-    // pts < target are discarded before presentation so the first
-    // pullFrame lands within ±1 CFR frame of `target` (design.md §7.3).
-    VideoResult seek(const ayt::time::Duration& target);
+    // Absolute seek. Default Accurate (frame-exact commit).
+    //
+    // Industrial / Windows Media Player-class scrub contract:
+    //   * SeekMode::Scrub — interactive drag/click: demux to prior I-frame,
+    //     then decode forward enqueueing frames up to a live ceiling that
+    //     tracks the thumb. UI shows the latest frame (frame-by-frame while
+    //     dragging). Never blocks the UI thread. Prefer this for scrubbers.
+    //   * SeekMode::Keyframe — I-frame snapshot only (fastest, picture may
+    //     lag the thumb on long GOP). Legacy/preview helper.
+    //   * SeekMode::Accurate — silent keyframe→target catch-up; first
+    //     presented frame within ±1 CFR frame of `target` (design.md §7.3).
+    //     Use for API/frame-exact seeks, not for live scrub drag.
+    enum class SeekMode : uint8_t
+    {
+        Accurate = 0,
+        Keyframe = 1,
+        Scrub = 2,
+    };
+    VideoResult seek(const ayt::time::Duration& target,
+                     SeekMode mode = SeekMode::Accurate);
+
+    // Drain frames from an in-loop seek into `_held`. Non-blocking.
+    // Scrub: keeps the latest decoded frame (frame-by-frame drag).
+    // Accurate/Keyframe: first acceptable frame for the mode.
+    void pollSeekPreview() noexcept;
 
     void setLoop(bool loop) noexcept;
     bool isLooping() const noexcept;
@@ -127,6 +147,11 @@ public:
     //                       state -> Ready; loop mode restarts silently)
     //   other             — decode failure; state -> Failed
     VideoResult pullFrame(VideoFrame& out);
+
+    // Last held/presented picture without advancing the clock. Valid from
+    // Ready/Paused/Playing (scrub preview after SeekMode::Keyframe).
+    // Ok + null when no picture is staged yet.
+    VideoResult currentFrame(VideoFrame& out) noexcept;
 
     // -- Events (V1, design.md §10.4) -------------------------------------
     // Fired synchronously on the calling thread. Callbacks must not
@@ -222,6 +247,23 @@ private:
     void notifyBufferingChanged(bool buffering) noexcept;
     void updateBufferingFromQueue() noexcept;  // V5 watermarks
     void setBuffering(bool buffering) noexcept;
+    void freezeClockAt(const ayt::time::Duration& mediaPos) noexcept;
+    void clampClockToDuration() noexcept;
+    ayt::time::Duration mediaDuration() const noexcept;
+    void armClockGate() noexcept;       // pause until first post-seek frame
+    bool tryReleaseClockGate() noexcept;
+    // Decode the first video frame on the player thread after a demux
+    // seek (decode thread must be stopped). Fills `_held` for instant
+    // present and advances demux/decoder to a consistent resume point.
+    // When `anyKeyframe` is true, accept the first decoded frame (scrub
+    // preview) instead of waiting for pts >= `_minPresentPts`.
+    bool primeFirstFrame(bool anyKeyframe = false) noexcept;
+    // In-loop seek helpers (decode thread owns demux/decoder).
+    bool postInLoopSeek(const ayt::time::Duration& target, SeekMode mode,
+                        bool waitApplied, bool waitFirstFrame) noexcept;
+    bool harvestSeekFrame(bool anyKeyframe, uint32_t timeoutMs) noexcept;
+    // Scrub: drain queue keeping the newest acceptable frame.
+    bool harvestScrubLatest() noexcept;
 
     void startLoop();                          // spawn decode thread
     void teardownPipeline() noexcept;          // stop+join+clear (stop/seek/
@@ -276,6 +318,18 @@ private:
     DemuxerOpenParams _demuxParams{};
     bool _networkStreaming = false;
     bool _buffering = false;
+    bool _clockGated = false; // true after startLoop until first frame ready
+    bool _pipelinePrimed = false; // demux/decoder already at clock after seek
+    bool _awaitingSeekPreview = false; // in-loop seek harvest pending
+    bool _awaitingSeekKeyframe = false;
+    bool _awaitingSeekScrub = false;
+    // Accurate async snap: accept any first frame for display but keep the
+    // scrub-target floor so play() still drops until pts >= target.
+    bool _awaitingSeekPreserveFloor = false;
+    bool _seekPreviewNeedsClear = false;
+    uint64_t _awaitingSeekSerial = 0;
+    // Steady-clock start of Accurate floor wait (for floor.ready logs).
+    std::chrono::steady_clock::time_point _floorWaitStarted{};
     uint32_t _bufferLow = 0;   // enter buffering when size <= low
     uint32_t _bufferHigh = 2;  // exit buffering when size >= high
 

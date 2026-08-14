@@ -79,6 +79,8 @@ struct FFmpegDemuxer::Impl
     std::int64_t lastVideoPtsUs = -1;
     // V5: interrupt_callback abort flag (stop/seek cancel).
     std::atomic<int> interrupt{0};
+    // Seek verification peeked a packet — return it from the next read.
+    bool pendingPacket = false;
 };
 
 FFmpegDemuxer::FFmpegDemuxer()
@@ -139,6 +141,8 @@ VideoResult FFmpegDemuxer::open(const DemuxerOpenParams& params)
         // Progressive: keep probe modest so TTFB stays reasonable.
         av_dict_set_int(&opts, "probesize", 2 * 1024 * 1024, 0);
         av_dict_set_int(&opts, "analyzeduration", 2 * 1000 * 1000, 0);
+        // Do NOT set seekable=0 here — MP4 often needs a seek to the
+        // trailing moov during find_stream_info.
     }
 
     // avformat_open_input takes ownership of ctx even on failure.
@@ -162,6 +166,13 @@ VideoResult FFmpegDemuxer::open(const DemuxerOpenParams& params)
         _impl->errorString = "avformat_find_stream_info failed";
         close();
         return VideoResult::DemuxError;
+    }
+
+    // Only force AVIO non-seekable when the caller asked for it (e.g. true
+    // live / non-Range sources). HTTP progressive with Range stays seekable.
+    if (!params.seekable && ctx->pb)
+    {
+        ctx->pb->seekable = 0;
     }
 
     // Pick the first video stream and the first audio stream (design.md
@@ -215,6 +226,7 @@ void FFmpegDemuxer::close() noexcept
     _impl->videoStreamIndex = -1;
     _impl->audioStreamIndex = -1;
     _impl->lastVideoPtsUs = -1;
+    _impl->pendingPacket = false;
     _impl->open = false;
     _impl->interrupt.store(0, std::memory_order_relaxed);
 }
@@ -423,12 +435,17 @@ VideoResult FFmpegDemuxer::readNextPacket(VideoPacket& outPacket)
     // Loop to skip unknown streams (subtitles, data, ...).
     for (;;)
     {
-        const int err = av_read_frame(_impl->formatContext, _impl->packet);
-        if (err < 0)
+        if (!_impl->pendingPacket)
         {
-            _impl->errorString = avErrorString(err);
-            return mapAvError(err); // EndOfStream at EOF (design.md §5.4)
+            const int err = av_read_frame(_impl->formatContext, _impl->packet);
+            if (err < 0)
+            {
+                _impl->errorString = avErrorString(err);
+                return mapAvError(err); // EndOfStream at EOF (design.md §5.4)
+            }
         }
+        _impl->pendingPacket = false;
+
         const int streamIndex = _impl->packet->stream_index;
         if (streamIndex != _impl->videoStreamIndex && streamIndex != _impl->audioStreamIndex)
         {
@@ -438,16 +455,22 @@ VideoResult FFmpegDemuxer::readNextPacket(VideoPacket& outPacket)
 
         const bool isVideo = streamIndex == _impl->videoStreamIndex;
         const AVRational& tb = isVideo ? _impl->videoTimebase : _impl->audioTimebase;
+        const int64_t rawPts =
+            _impl->packet->pts != AV_NOPTS_VALUE
+                ? _impl->packet->pts
+                : (_impl->packet->dts != AV_NOPTS_VALUE ? _impl->packet->dts : 0);
+        const int64_t rawDts =
+            _impl->packet->dts != AV_NOPTS_VALUE
+                ? _impl->packet->dts
+                : rawPts;
 
         outPacket = VideoPacket{};
         outPacket.data = _impl->packet->data;
         outPacket.size = static_cast<uint32_t>(_impl->packet->size);
         outPacket.isVideo = isVideo;
         outPacket.streamIndex = streamIndex;
-        outPacket.pts = ayt::time::Duration::fromUs(
-            avRescaleUs(_impl->packet->pts != AV_NOPTS_VALUE ? _impl->packet->pts : 0, tb));
-        outPacket.dts = ayt::time::Duration::fromUs(
-            avRescaleUs(_impl->packet->dts != AV_NOPTS_VALUE ? _impl->packet->dts : 0, tb));
+        outPacket.pts = ayt::time::Duration::fromUs(avRescaleUs(rawPts, tb));
+        outPacket.dts = ayt::time::Duration::fromUs(avRescaleUs(rawDts, tb));
         if (isVideo)
         {
             _impl->lastVideoPtsUs = outPacket.pts.toUs();
@@ -456,7 +479,8 @@ VideoResult FFmpegDemuxer::readNextPacket(VideoPacket& outPacket)
     }
 }
 
-VideoResult FFmpegDemuxer::seek(const ayt::time::Duration& target)
+VideoResult FFmpegDemuxer::seek(const ayt::time::Duration& target,
+                                bool keyframeOnly)
 {
     if (!_impl->open)
     {
@@ -466,34 +490,144 @@ VideoResult FFmpegDemuxer::seek(const ayt::time::Duration& target)
     {
         return VideoResult::UnsupportedFormat; // design.md §7.3
     }
-
-    // V4 bidirectional polish: when seeking at/after the last read
-    // video pts, try a non-BACKWARD seek first (less GOP rewind). Fall
-    // back to BACKWARD on failure. Player still applies _minPresentPts.
-    const std::int64_t targetUs = target.toUs();
-    const bool preferForward =
-        _impl->lastVideoPtsUs >= 0 && targetUs >= _impl->lastVideoPtsUs;
-    int flags = preferForward ? 0 : AVSEEK_FLAG_BACKWARD;
-    if (av_seek_frame(_impl->formatContext, -1, targetUs, flags) < 0)
+    if (_impl->formatContext && _impl->formatContext->pb
+        && _impl->formatContext->pb->seekable == 0)
     {
-        if (preferForward)
+        return VideoResult::UnsupportedFormat;
+    }
+
+    _impl->interrupt.store(0, std::memory_order_relaxed);
+    _impl->pendingPacket = false;
+    if (_impl->packet)
+    {
+        av_packet_unref(_impl->packet);
+    }
+
+    std::int64_t targetUs = target.toUs();
+    if (targetUs < 0)
+    {
+        targetUs = 0;
+    }
+    if (_impl->formatContext->duration > 0
+        && targetUs > _impl->formatContext->duration)
+    {
+        targetUs = _impl->formatContext->duration;
+    }
+
+    AVFormatContext* ctx = _impl->formatContext;
+    const int vIdx = _impl->videoStreamIndex;
+    const AVRational usTb{1, AV_TIME_BASE};
+    const int64_t streamTs =
+        (vIdx >= 0 && _impl->videoTimebase.num != 0 && _impl->videoTimebase.den != 0)
+            ? av_rescale_q(targetUs, usTb, _impl->videoTimebase)
+            : targetUs;
+
+    // Peek first video packet after a candidate seek. Long-GOP files often
+    // have the previous keyframe far before target (even at t=0) — that is
+    // a valid Keyframe scrub land, NOT a failed seek. Never fall through to
+    // AVSEEK_FLAG_ANY for keyframe seeks (non-KF land breaks H.264 refs).
+    auto runSeek = [&](const char* name, int err) -> bool {
+        if (err < 0)
         {
-            flags = AVSEEK_FLAG_BACKWARD;
-            if (av_seek_frame(_impl->formatContext, -1, targetUs, flags) < 0)
+            return false;
+        }
+        avformat_flush(ctx);
+
+        AVPacket* peek = av_packet_alloc();
+        if (!peek)
+        {
+            _impl->lastVideoPtsUs = -1;
+            return true;
+        }
+        std::int64_t landedUs = -1;
+        bool isKey = false;
+        for (int i = 0; i < 48; ++i)
+        {
+            const int rr = av_read_frame(ctx, peek);
+            if (rr < 0)
             {
-                _impl->errorString = "av_seek_frame failed";
-                return VideoResult::DemuxError;
+                break;
+            }
+            if (vIdx >= 0 && peek->stream_index != vIdx)
+            {
+                av_packet_unref(peek);
+                continue;
+            }
+            const int64_t raw =
+                peek->pts != AV_NOPTS_VALUE
+                    ? peek->pts
+                    : (peek->dts != AV_NOPTS_VALUE ? peek->dts : 0);
+            landedUs = avRescaleUs(raw, _impl->videoTimebase);
+            isKey = (peek->flags & AV_PKT_FLAG_KEY) != 0;
+            av_packet_unref(_impl->packet);
+            av_packet_ref(_impl->packet, peek);
+            _impl->pendingPacket = true;
+            av_packet_unref(peek);
+            break;
+        }
+        av_packet_free(&peek);
+
+        std::fprintf(stderr,
+                     "[AYVideo][demux] seek strategy=%s kfOnly=%d target=%.3fs "
+                     "landed=%.3fs key=%d streamTs=%lld\n",
+                     name, keyframeOnly ? 1 : 0, targetUs / 1e6,
+                     landedUs >= 0 ? landedUs / 1e6 : -1.0, isKey ? 1 : 0,
+                     static_cast<long long>(streamTs));
+        std::fflush(stderr);
+
+        // Accurate path wants to be *near* target. Reject a bogus land at
+        // t≈0 only when we asked for mid-file AND this strategy used ANY
+        // (handled by not calling ANY below for keyframeOnly).
+        _impl->lastVideoPtsUs = -1;
+        return true;
+    };
+
+    // Keyframe scrub / Accurate pre-roll: always keyframe-at-or-before.
+    if (keyframeOnly)
+    {
+        if (vIdx >= 0
+            && runSeek("seek_frame/video/BACKWARD",
+                       av_seek_frame(ctx, vIdx, streamTs, AVSEEK_FLAG_BACKWARD)))
+        {
+            return VideoResult::Ok;
+        }
+        if (runSeek("seek_frame/default/BACKWARD",
+                    av_seek_frame(ctx, -1, targetUs, AVSEEK_FLAG_BACKWARD)))
+        {
+            return VideoResult::Ok;
+        }
+        if (vIdx >= 0)
+        {
+            const int64_t minTs =
+                streamTs > 0 ? streamTs - av_rescale_q(30'000'000, usTb,
+                                                       _impl->videoTimebase)
+                             : 0;
+            if (runSeek("seek_file/video/BACKWARD",
+                        avformat_seek_file(ctx, vIdx, minTs < 0 ? 0 : minTs,
+                                          streamTs, streamTs,
+                                          AVSEEK_FLAG_BACKWARD)))
+            {
+                return VideoResult::Ok;
             }
         }
-        else
-        {
-            _impl->errorString = "av_seek_frame failed";
-            return VideoResult::DemuxError;
-        }
+        _impl->errorString = "keyframe seek failed";
+        return VideoResult::DemuxError;
     }
-    avformat_flush(_impl->formatContext);
-    _impl->lastVideoPtsUs = -1; // unknown until next read
-    return VideoResult::Ok;
+
+    // Non-keyframe positioning (unused by current player paths).
+    if (vIdx >= 0
+        && runSeek("seek_frame/video/ANY",
+                   av_seek_frame(ctx, vIdx, streamTs, AVSEEK_FLAG_ANY)))
+    {
+        return VideoResult::Ok;
+    }
+    if (runSeek("seek_file/default",
+                avformat_seek_file(ctx, -1, 0, targetUs, targetUs + 2'000'000, 0)))
+    {
+        return VideoResult::Ok;
+    }
+    _impl->errorString = "av_seek_frame failed";
+    return VideoResult::DemuxError;
 }
 
 VideoResult FFmpegDemuxer::setActiveStreamIndices(int32_t videoStreamIndex,
@@ -553,6 +687,11 @@ VideoResult FFmpegDemuxer::reconnect()
 void FFmpegDemuxer::requestAbort() noexcept
 {
     _impl->interrupt.store(1, std::memory_order_relaxed);
+}
+
+void FFmpegDemuxer::clearAbort() noexcept
+{
+    _impl->interrupt.store(0, std::memory_order_relaxed);
 }
 
 const char* FFmpegDemuxer::lastErrorString() const noexcept

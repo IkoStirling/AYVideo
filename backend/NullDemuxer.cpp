@@ -40,7 +40,8 @@ VideoResult NullDemuxer::readNextPacket(VideoPacket& /*outPacket*/)
     return VideoResult::EndOfStream;
 }
 
-VideoResult NullDemuxer::seek(const ayt::time::Duration& /*target*/)
+VideoResult NullDemuxer::seek(const ayt::time::Duration& /*target*/,
+                              bool /*keyframeOnly*/)
 {
     if (!_open)
     {

@@ -190,7 +190,8 @@ VideoResult MockDemuxer::readNextPacket(VideoPacket& outPacket)
     return VideoResult::Ok;
 }
 
-VideoResult MockDemuxer::seek(const ayt::time::Duration& /*target*/)
+VideoResult MockDemuxer::seek(const ayt::time::Duration& /*target*/,
+                              bool /*keyframeOnly*/)
 {
     if (!_open)
     {

@@ -12,6 +12,7 @@
 // stuck pipeline times out and fails the assertion).
 
 #include <chrono>
+#include <cstdlib>
 #include <memory>
 #include <thread>
 #include <vector>
@@ -224,6 +225,33 @@ TEST_SUITE(PlayerPlaybackSuite)
                      static_cast<int>(VideoResult::Ok));
     }
 
+    TEST_CASE(PlayerKeyframeSeekStagesCurrentFrame) {
+        // Scrub preview: Keyframe mode stages the first decoded frame and
+        // exposes it via currentFrame() while Paused — without requiring
+        // Accurate pts >= target.
+        PlaybackFixture fx;
+        CHECK_INT_EQ(static_cast<int>(fx.player.play()),
+                     static_cast<int>(VideoResult::Ok));
+        VideoFrame f;
+        (void)fx.advanceAndPull(40'000, f);
+        CHECK_INT_EQ(static_cast<int>(fx.player.pause()),
+                     static_cast<int>(VideoResult::Ok));
+
+        const ayt::time::Duration target =
+            ayt::time::Duration::fromUs(200'000);
+        CHECK_INT_EQ(static_cast<int>(fx.player.seek(
+                         target, AYVideoPlayer::SeekMode::Keyframe)),
+                     static_cast<int>(VideoResult::Ok));
+        CHECK_INT_EQ(static_cast<int>(fx.player.state()),
+                     static_cast<int>(PlayerState::Paused));
+        CHECK_TRUE(!fx.player.isBuffering());
+        CHECK_INT_EQ(static_cast<int>(fx.player.currentFrame(f)),
+                     static_cast<int>(VideoResult::Ok));
+        CHECK_TRUE(f.data != nullptr);
+        CHECK_INT_EQ(static_cast<int>(fx.player.stop()),
+                     static_cast<int>(VideoResult::Ok));
+    }
+
     TEST_CASE(PlayerSeekForwardThenBackward) {
         // V4 bidirectional polish: forward seek then backward seek, each
         // respecting the presentation floor (±1 CFR frame).
@@ -312,6 +340,79 @@ TEST_SUITE(PlayerPlaybackSuite)
         CHECK_INT_EQ(static_cast<int>(r), static_cast<int>(VideoResult::Ok));
         CHECK_TRUE(g.data != nullptr);
         CHECK_INT_EQ(g.pts.toUs(), static_cast<std::int64_t>(0));
+    }
+
+    TEST_CASE(LiveHttpProgressiveSmoke) {
+        // Opt-in: set AYVIDEO_HTTP_SMOKE_URL to a reachable progressive
+        // MP4 (e.g. http://127.0.0.1:8080/test_video.mp4). Skips when unset
+        // so CI stays file-free.
+        const char* url = nullptr;
+#if defined(_MSC_VER)
+        char* urlBuf = nullptr;
+        size_t urlLen = 0;
+        if (_dupenv_s(&urlBuf, &urlLen, "AYVIDEO_HTTP_SMOKE_URL") == 0 && urlBuf)
+        {
+            url = urlBuf;
+        }
+#else
+        url = std::getenv("AYVIDEO_HTTP_SMOKE_URL");
+#endif
+        if (!url || url[0] == '\0')
+        {
+#if defined(_MSC_VER)
+            free(urlBuf);
+#endif
+            CHECK_TRUE(true);
+            return;
+        }
+
+        AYVideoPlayer player(std::make_unique<FFmpegDemuxer>(),
+                             std::make_unique<FFmpegDecoder>(),
+                             nullptr); // real wall clock
+        player.setBufferWatermarks(0, 2);
+
+        CHECK_INT_EQ(static_cast<int>(player.open(url)),
+                     static_cast<int>(VideoResult::Ok));
+        MediaInfo info;
+        CHECK_INT_EQ(static_cast<int>(player.getMediaInfo(info)),
+                     static_cast<int>(VideoResult::Ok));
+        CHECK_TRUE(info.hasVideo);
+        CHECK_TRUE(info.width > 0);
+        CHECK_TRUE(info.height > 0);
+
+        // HTTP + Range: seek should succeed (smoke servers like npx serve).
+        CHECK_INT_EQ(static_cast<int>(
+                         player.seek(ayt::time::Duration::fromUs(1'000'000))),
+                     static_cast<int>(VideoResult::Ok));
+
+        CHECK_INT_EQ(static_cast<int>(player.play()),
+                     static_cast<int>(VideoResult::Ok));
+
+        int got = 0;
+        const auto deadline =
+            std::chrono::steady_clock::now() + std::chrono::seconds(15);
+        while (std::chrono::steady_clock::now() < deadline && got < 5)
+        {
+            VideoFrame f;
+            const VideoResult r = player.pullFrame(f);
+            if (r == VideoResult::Ok && f.data != nullptr)
+            {
+                ++got;
+            }
+            else if (r != VideoResult::Ok)
+            {
+                break;
+            }
+            std::this_thread::sleep_for(std::chrono::milliseconds(5));
+        }
+        CHECK_TRUE(got >= 3);
+        CHECK_INT_EQ(static_cast<int>(player.state()),
+                     static_cast<int>(PlayerState::Playing));
+        CHECK_INT_EQ(static_cast<int>(player.stop()),
+                     static_cast<int>(VideoResult::Ok));
+#if defined(_MSC_VER)
+        free(urlBuf);
+#endif
     }
 
 TEST_SUITE_END

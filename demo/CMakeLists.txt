@@ -61,7 +61,7 @@ target_include_directories(AYVideo_EngineDemo PRIVATE
 )
 
 if(WIN32)
-    target_link_libraries(AYVideo_EngineDemo PRIVATE user32 gdi32)
+    target_link_libraries(AYVideo_EngineDemo PRIVATE user32 gdi32 comctl32)
 endif()
 
 target_compile_definitions(AYVideo_EngineDemo PRIVATE

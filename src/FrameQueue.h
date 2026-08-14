@@ -37,6 +37,10 @@ struct QueuedFrame
 {
     VideoFrame frame;
     std::vector<uint8_t> pixels;   // owns the pixel bytes
+    // DecodeLoop stamps this with seekAppliedSerial at enqueue so the
+    // player can reject stale pre-seek pictures (pts alone is not enough:
+    // older queue entries can have *higher* pts than the new land).
+    uint64_t seekSerial = 0;
 
     QueuedFrame() = default;
     QueuedFrame(const QueuedFrame&) = delete;
@@ -44,6 +48,7 @@ struct QueuedFrame
     QueuedFrame(QueuedFrame&& other) noexcept
         : frame(other.frame)
         , pixels(std::move(other.pixels))
+        , seekSerial(other.seekSerial)
     {
         // Re-seat data after the vector move — a memcpy'd VideoFrame
         // still held the old pixels.data() pointer.
@@ -52,6 +57,7 @@ struct QueuedFrame
             frame.data = pixels.data();
         }
         other.frame = VideoFrame{};
+        other.seekSerial = 0;
     }
     QueuedFrame& operator=(QueuedFrame&& other) noexcept
     {
@@ -59,6 +65,7 @@ struct QueuedFrame
         {
             frame = other.frame;
             pixels = std::move(other.pixels);
+            seekSerial = other.seekSerial;
             if (!pixels.empty())
             {
                 frame.data = pixels.data();
@@ -68,6 +75,7 @@ struct QueuedFrame
                 frame.data = nullptr;
             }
             other.frame = VideoFrame{};
+            other.seekSerial = 0;
         }
         return *this;
     }
@@ -108,7 +116,7 @@ public:
     // full (backpressure) unless DropOldest is set. Must not be called
     // from the consumer thread. Null-payload frames are dropped
     // (defensive; the decode loop only pushes frames with data — §6.2).
-    void push(const VideoFrame& frame)
+    void push(const VideoFrame& frame, uint64_t seekSerial = 0)
     {
         if (frame.data == nullptr || frame.dataSize == 0)
         {
@@ -149,6 +157,7 @@ public:
                 dest.data.pixels.assign(frame.data, frame.data + frame.dataSize);
                 dest.data.frame = frame;
                 dest.data.frame.data = dest.data.pixels.data();
+                dest.data.seekSerial = seekSerial;
                 dest.sequence.store(head + 1, std::memory_order_release);
                 _head.store(head + 1, std::memory_order_relaxed);
                 return;
@@ -162,6 +171,7 @@ public:
         slot.data.pixels.assign(frame.data, frame.data + frame.dataSize);
         slot.data.frame = frame;
         slot.data.frame.data = slot.data.pixels.data();
+        slot.data.seekSerial = seekSerial;
 
         slot.sequence.store(head + 1, std::memory_order_release);
         _head.store(head + 1, std::memory_order_relaxed);

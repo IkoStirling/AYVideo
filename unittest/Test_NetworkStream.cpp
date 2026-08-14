@@ -61,7 +61,7 @@ bool waitUntilNotBuffering(AYVideoPlayer& p, int maxTries = 4000)
 
 TEST_SUITE(NetworkStreamSuite)
 
-    TEST_CASE(HttpOpenIsNotSeekable) {
+    TEST_CASE(HttpOpenAllowsSeek) {
         FakeNow::us = 0;
         AYVideoPlayer player(std::make_unique<MockDemuxer>(8),
                              std::make_unique<MockDecoder>(8), &FakeNow::tick);
@@ -69,9 +69,10 @@ TEST_SUITE(NetworkStreamSuite)
                      static_cast<int>(VideoResult::Ok));
         CHECK_INT_EQ(static_cast<int>(player.state()),
                      static_cast<int>(PlayerState::Ready));
+        // V5: HTTP progressive is seekable when Range is available (Mock OK).
         CHECK_INT_EQ(static_cast<int>(
                          player.seek(ayt::time::Duration::fromUs(80'000))),
-                     static_cast<int>(VideoResult::UnsupportedFormat));
+                     static_cast<int>(VideoResult::Ok));
         CHECK_INT_EQ(static_cast<int>(player.state()),
                      static_cast<int>(PlayerState::Ready));
         CHECK_INT_EQ(static_cast<int>(player.stop()),
@@ -196,7 +197,8 @@ TEST_SUITE(NetworkStreamSuite)
                      static_cast<int>(VideoResult::Ok));
         CHECK_INT_EQ(static_cast<int>(player.play()),
                      static_cast<int>(VideoResult::Ok));
-        CHECK_TRUE(!player.isBuffering());
+        // startLoop arms a short clock-gate (reports buffering) until the
+        // first decoded frame — not a network reconnect path.
 
         int got = 0;
         for (int i = 0; i < 8 && got < 3; ++i)
@@ -209,6 +211,7 @@ TEST_SUITE(NetworkStreamSuite)
             }
         }
         CHECK_TRUE(got >= 3);
+        CHECK_TRUE(!player.isBuffering());
         CHECK_INT_EQ(static_cast<int>(demuxRaw->reconnectCount()), 0);
         CHECK_INT_EQ(static_cast<int>(player.stop()),
                      static_cast<int>(VideoResult::Ok));

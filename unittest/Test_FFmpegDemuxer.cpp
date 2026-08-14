@@ -113,6 +113,48 @@ TEST_SUITE(FFmpegDemuxerSuite)
         CHECK_TRUE(p.pts.toMs() <= 200);
     }
 
+    TEST_CASE(FFmpegDemuxerSeekToMiddleDoesNotRestartAtZero) {
+        // Regression: BACKWARD seek with min_ts=INT64_MIN landed at t=0
+        // on some MP4s, making Accurate seek decode the whole file.
+        GeneratedClip c = makeClip(false); // 12 frames @ 25fps ≈ 480ms
+        FFmpegDemuxer d;
+        DemuxerOpenParams params;
+        params.path = c.path;
+        CHECK_INT_EQ(static_cast<int>(d.open(params)),
+                     static_cast<int>(VideoResult::Ok));
+
+        VideoPacket p;
+        // Read a few packets so we are not already at the start.
+        for (int i = 0; i < 3; ++i)
+        {
+            CHECK_INT_EQ(static_cast<int>(d.readNextPacket(p)),
+                         static_cast<int>(VideoResult::Ok));
+        }
+
+        const ayt::time::Duration target =
+            ayt::time::Duration::fromUs(200'000); // frame 5
+        CHECK_INT_EQ(static_cast<int>(d.seek(target)),
+                     static_cast<int>(VideoResult::Ok));
+
+        // First video packet after seek must be at/before target and not
+        // stuck at the very start when we asked for mid-clip.
+        bool gotVideo = false;
+        for (int i = 0; i < 16 && !gotVideo; ++i)
+        {
+            CHECK_INT_EQ(static_cast<int>(d.readNextPacket(p)),
+                         static_cast<int>(VideoResult::Ok));
+            if (p.isVideo)
+            {
+                gotVideo = true;
+            }
+        }
+        CHECK_TRUE(gotVideo);
+        CHECK_TRUE(p.pts.toUs() <= 200'000);
+        // Allow prior-keyframe slack, but not a full restart at 0 when the
+        // clip has frames around 200ms (CFR keyframes are dense here).
+        CHECK_TRUE(p.pts.toUs() >= 80'000);
+    }
+
     TEST_CASE(FFmpegDemuxerWithAudioStream) {
         // V1: AAC synthetic mux in this vcpkg FFmpeg 8 build leaves the
         // process unstable (ACCESS_VIOLATION in later suites). Audio

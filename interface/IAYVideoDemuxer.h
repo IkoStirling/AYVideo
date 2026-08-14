@@ -66,7 +66,10 @@ public:
     // Seeks to an absolute presentation time. Invalidates any packet
     // previously returned. Returns InvalidState when !isOpen(),
     // UnsupportedFormat when the container is not seekable.
-    virtual VideoResult seek(const ayt::time::Duration& target) = 0;
+    // `keyframeOnly`: land on a keyframe at/before target (scrub / Accurate
+    // pre-roll). When false, may use non-keyframe positioning (rare).
+    virtual VideoResult seek(const ayt::time::Duration& target,
+                             bool keyframeOnly = true) = 0;
 
     // V4 N-10: remap which streams readNextPacket emits. Pass container
     // stream indices (-1 disables that kind). Default = no-op Ok so
@@ -87,6 +90,9 @@ public:
 
     // V5: cooperatively abort a blocking open/read (interrupt callback).
     virtual void requestAbort() noexcept {}
+
+    // Clear a prior requestAbort() so seek / a new DecodeLoop can read again.
+    virtual void clearAbort() noexcept {}
 };
 
 } // namespace ayt::video
