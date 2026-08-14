@@ -572,7 +572,8 @@ AYRuntime/AYVideo/
 ### V4+（对齐 §3 表）
 
 - [x] seek 帧精确（slice-1）：keyframe seek + `_minPresentPts` 丢弃 + pause→seek→play 管线重启；CFR ±1 帧 UT
-- [ ] 错误恢复 / 字幕 / 多轨 / 内存压力 / 双向 seek 精修
+- [x] 错误恢复 / 丢帧（slice-2）：中途 `DemuxError`/`DecodeError` soft-skip，保持 Playing；Mock inject UT
+- [ ] 字幕 / 多轨 / 内存压力 / 双向 seek 精修
 
 ---
 
@@ -663,6 +664,7 @@ cmake --build D:\Projects\out\build\x64-Debug --target AYVideo_Tests
 
 ## 21. Changelog
 
+- **2026-08-14 (V4 recovery slice-2)**：DecodeLoop 对中途 DemuxError/DecodeError soft-skip；Mock `failReadAt`/`failFeedAt`；`Test_ErrorRecovery`。
 - **2026-08-14 (V4 seek slice-1)**：`seek` 设 `_minPresentPts` 丢弃预目标帧；Paused 无 decode loop 时 `play()` 按 clock 位权重启；`PlayerSeekLandsNearTargetPts`。
 - **2026-08-14 (V3 demo)**：`AYVideo_EngineDemo`（GameLoop + RendererSubSystem + textured quad）；`AYVIDEO_DEMO_PATH=1|2` solid/I420；`check_screenshot.ps1`。
 - **2026-08-14 (V3 GPU bridge)**：`RendererVideoFrameTexture` PRIVATE 链 AYRenderer；`makeRendererVideoFrameTexture` + `gpuTextureId()`；Noop UT。

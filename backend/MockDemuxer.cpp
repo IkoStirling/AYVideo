@@ -81,6 +81,13 @@ VideoResult MockDemuxer::readNextPacket(VideoPacket& outPacket)
         return VideoResult::EndOfStream;
     }
 
+    if (!_failReadDone && _failReadAt >= 0 && _emitted == _failReadAt)
+    {
+        _failReadDone = true;
+        ++_readCount;
+        return VideoResult::DemuxError;
+    }
+
     fillPayload(_payload, _emitted);
     outPacket = VideoPacket{};
     outPacket.data = _payload.data();

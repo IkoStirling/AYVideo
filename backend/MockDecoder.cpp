@@ -47,6 +47,13 @@ VideoResult MockDecoder::feedPacket(const VideoPacket& /*packet*/)
     {
         return VideoResult::NotInitialized;
     }
+    if (!_failFeedDone && _failFeedAt >= 0
+        && static_cast<int32_t>(_feedCount) == _failFeedAt)
+    {
+        _failFeedDone = true;
+        ++_feedCount;
+        return VideoResult::DecodeError;
+    }
     // A-12: a real feed after flush clears the drain state and restarts
     // the scripted frame sequence (seek / loop restart).
     if (_flushed)

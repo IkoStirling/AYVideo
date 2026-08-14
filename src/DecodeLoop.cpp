@@ -29,6 +29,7 @@ void DecodeLoop::start()
     _finished.store(false);
     _endedClean.store(false);
     _failure.store(VideoResult::Ok);
+    _skippedErrors.store(0);
     _thread = std::thread(&DecodeLoop::run, this);
 }
 
@@ -72,6 +73,12 @@ void DecodeLoop::run() noexcept
             {
                 eosSeen = true;
                 return false;
+            }
+            if (fr == VideoResult::DecodeError)
+            {
+                // V4 soft-skip: drop a bad frame and keep draining.
+                _skippedErrors.fetch_add(1);
+                continue;
             }
             if (fr != VideoResult::Ok)
             {
@@ -131,6 +138,12 @@ void DecodeLoop::run() noexcept
                     return false;
                 }
                 continue;
+            }
+            if (fr == VideoResult::DecodeError)
+            {
+                // V4 soft-skip: drop this packet and continue demuxing.
+                _skippedErrors.fetch_add(1);
+                return true;
             }
             if (fr != VideoResult::Ok)
             {
@@ -192,6 +205,13 @@ void DecodeLoop::run() noexcept
             pumpFrames(eosSeen);
             _endedClean.store(true);
             break;
+        }
+
+        if (r == VideoResult::DemuxError)
+        {
+            // V4 soft-skip: mid-stream demux glitch — continue reading.
+            _skippedErrors.fetch_add(1);
+            continue;
         }
 
         _failure.store(r);

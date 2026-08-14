@@ -27,6 +27,14 @@ public:
     uint32_t flushCount() const noexcept { return _flushCount; }
     bool wasClosed() const noexcept { return _closed; }
 
+    // V4 soft-skip: the feed whose 0-based index equals `index` returns
+    // DecodeError once, then subsequent feeds succeed.
+    void failFeedAt(int32_t index) noexcept
+    {
+        _failFeedAt = index;
+        _failFeedDone = false;
+    }
+
     VideoResult open(const DecoderOpenParams& params) override;
     void close() noexcept override;
     bool isOpen() const noexcept override;
@@ -41,6 +49,8 @@ private:
     bool _closed = false;
     bool _flushed = false;
     bool _fedAny = false;
+    int32_t _failFeedAt = -1;
+    bool _failFeedDone = false;
 
     uint32_t _openCount = 0;
     uint32_t _feedCount = 0;

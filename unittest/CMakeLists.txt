@@ -37,6 +37,7 @@ add_executable(${TEST_TARGET}
     Test_SyncClock.cpp           # sync clock contract (fake now provider)
     Test_VideoSubSystem.cpp      # V2+ GameLoop subsystem smoke
     Test_FrameTexture.cpp        # V3 color convert + IVideoFrameTexture
+    Test_ErrorRecovery.cpp       # V4 soft-skip mid-stream Demux/Decode errors
 )
 
 # V3 GPU bridge — needs AYRenderer Noop backend (design.md §12).

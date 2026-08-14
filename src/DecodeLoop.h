@@ -46,6 +46,8 @@ public:
     bool endedCleanly() const noexcept { return _endedClean.load(); }
     VideoResult failure() const noexcept { return _failure.load(); }
     bool finished() const noexcept { return _finished.load(); }
+    // V4 soft-skip: mid-stream DemuxError/DecodeError packets dropped.
+    uint32_t skippedErrors() const noexcept { return _skippedErrors.load(); }
 
 private:
     void run() noexcept;
@@ -61,6 +63,7 @@ private:
     std::atomic<bool> _finished{false};
     std::atomic<bool> _endedClean{false};
     std::atomic<VideoResult> _failure{VideoResult::Ok};
+    std::atomic<uint32_t> _skippedErrors{0};
 };
 
 } // namespace ayt::video

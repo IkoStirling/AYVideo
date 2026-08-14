@@ -24,6 +24,15 @@ public:
     void setFailOpen(bool fail) noexcept { _failOpen = fail; }
     bool failOpen() const noexcept { return _failOpen; }
 
+    // V4 soft-skip: next read that would emit packet `index` returns
+    // DemuxError once, then the same index is emitted on the following
+    // read (packet is not consumed by the error).
+    void failReadAt(int32_t index) noexcept
+    {
+        _failReadAt = index;
+        _failReadDone = false;
+    }
+
     // Test observers (design.md §19): interaction counters.
     uint32_t openCount() const noexcept { return _openCount; }
     uint32_t readCount() const noexcept { return _readCount; }
@@ -43,6 +52,8 @@ private:
     bool _open = false;
     bool _closed = false;
     bool _failOpen = false;
+    int32_t _failReadAt = -1;
+    bool _failReadDone = false;
 
     uint32_t _openCount = 0;
     uint32_t _readCount = 0;
