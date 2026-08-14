@@ -10,6 +10,7 @@
 #include <vector>
 
 #include <AYVideoSubtitle.h>
+#include <AYVideoTrack.h>
 
 namespace ayt::video
 {
@@ -30,13 +31,18 @@ struct MediaInfo
 
     // Codec names as reported by the container ("h264", "aac", ...);
     // empty when unknown. Diagnostic only — dispatch on capability, not
-    // on this string (design.md §8.1).
+    // on this string (design.md §8.1). Active-track summary (index 0
+    // default; refreshed after setActive* + play/seek).
     std::string videoCodec;
     std::string audioCodec;
 
-    // Soft-subtitle tracks (V4 discovery; empty when none). Order matches
-    // container enumeration; streamIndex is the demuxer stream id.
+    // Soft-subtitle tracks (V4 discovery; empty when none).
     std::vector<SubtitleTrackInfo> subtitleTracks;
+
+    // All video/audio streams (V4 N-10). Scalar fields above mirror the
+    // currently active selection.
+    std::vector<VideoTrackInfo> videoTracks;
+    std::vector<AudioTrackInfo> audioTracks;
 
     // Codec extradata (AVCodecParameters.extradata) — required by many
     // codecs (mpeg4 VOL, h264 SPS/PPS in mp4) before the first feed.

@@ -25,6 +25,14 @@ public:
     void setProvideSubtitleTrack(bool on) noexcept { _provideSubtitle = on; }
     bool provideSubtitleTrack() const noexcept { return _provideSubtitle; }
 
+    // V4 N-10: inject a second audio track (eng + jpn) for selection UTs.
+    void setProvideMultiAudio(bool on) noexcept { _provideMultiAudio = on; }
+    bool provideMultiAudio() const noexcept { return _provideMultiAudio; }
+
+    // Active stream indices after setActiveStreamIndices (tests).
+    int32_t activeVideoStreamIndex() const noexcept { return _activeVideoStream; }
+    int32_t activeAudioStreamIndex() const noexcept { return _activeAudioStream; }
+
     // Fault injection (design.md §19): when enabled, open() returns
     // DemuxError — drives the player's Failed state.
     void setFailOpen(bool fail) noexcept { _failOpen = fail; }
@@ -51,6 +59,8 @@ public:
     VideoResult getMediaInfo(MediaInfo& outInfo) const override;
     VideoResult readNextPacket(VideoPacket& outPacket) override;
     VideoResult seek(const ayt::time::Duration& target) override;
+    VideoResult setActiveStreamIndices(int32_t videoStreamIndex,
+                                       int32_t audioStreamIndex) override;
 
 private:
     int32_t _packetCount = 0;
@@ -59,6 +69,9 @@ private:
     bool _closed = false;
     bool _failOpen = false;
     bool _provideSubtitle = false;
+    bool _provideMultiAudio = false;
+    int32_t _activeVideoStream = 0;
+    int32_t _activeAudioStream = -1;
     int32_t _failReadAt = -1;
     bool _failReadDone = false;
 

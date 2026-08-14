@@ -53,6 +53,16 @@ public:
     // previously returned. Returns InvalidState when !isOpen(),
     // UnsupportedFormat when the container is not seekable.
     virtual VideoResult seek(const ayt::time::Duration& target) = 0;
+
+    // V4 N-10: remap which streams readNextPacket emits. Pass container
+    // stream indices (-1 disables that kind). Default = no-op Ok so
+    // Null/legacy backends stay valid. Applied by the player on the
+    // next play/seek (not mid-decode without flush).
+    virtual VideoResult setActiveStreamIndices(int32_t /*videoStreamIndex*/,
+                                               int32_t /*audioStreamIndex*/)
+    {
+        return VideoResult::Ok;
+    }
 };
 
 } // namespace ayt::video

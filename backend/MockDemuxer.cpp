@@ -38,6 +38,8 @@ VideoResult MockDemuxer::open(const DemuxerOpenParams& /*params*/)
     _open = true;
     _emitted = 0;
     _closed = false;
+    _activeVideoStream = 0;
+    _activeAudioStream = _provideMultiAudio ? 1 : -1;
     return VideoResult::Ok;
 }
 
@@ -67,16 +69,78 @@ VideoResult MockDemuxer::getMediaInfo(MediaInfo& outInfo) const
     outInfo.durationSec = static_cast<double>(_packetCount) / 25.0;
     outInfo.hasVideo = true;
     outInfo.videoCodec = "mock-h264";
+    {
+        VideoTrackInfo vt{};
+        vt.streamIndex = 0;
+        vt.codec = "mock-h264";
+        vt.width = 320;
+        vt.height = 240;
+        vt.frameRate = 25.0;
+        outInfo.videoTracks.push_back(vt);
+    }
+    if (_provideMultiAudio)
+    {
+        AudioTrackInfo eng{};
+        eng.streamIndex = 1;
+        eng.codec = "mock-aac";
+        eng.language = "eng";
+        eng.title = "English";
+        eng.sampleRate = 48000;
+        eng.channels = 2;
+        AudioTrackInfo jpn = eng;
+        jpn.streamIndex = 2;
+        jpn.language = "jpn";
+        jpn.title = "Japanese";
+        outInfo.audioTracks.push_back(eng);
+        outInfo.audioTracks.push_back(jpn);
+        outInfo.hasAudio = true;
+        const AudioTrackInfo& active =
+            (_activeAudioStream == 2) ? jpn : eng;
+        outInfo.audioCodec = active.codec;
+        outInfo.audioSampleRate = active.sampleRate;
+        outInfo.audioChannels = active.channels;
+    }
     if (_provideSubtitle)
     {
         SubtitleTrackInfo sub{};
-        sub.streamIndex = 1;
+        sub.streamIndex = 3;
         sub.kind = SubtitleKind::Text;
         sub.codec = "mock-srt";
         sub.language = "eng";
         sub.title = "Mock English";
         outInfo.subtitleTracks.push_back(sub);
         outInfo.hasSubtitles = true;
+    }
+    return VideoResult::Ok;
+}
+
+VideoResult MockDemuxer::setActiveStreamIndices(int32_t videoStreamIndex,
+                                                 int32_t audioStreamIndex)
+{
+    if (!_open)
+    {
+        return VideoResult::NotInitialized;
+    }
+    if (videoStreamIndex != 0)
+    {
+        return VideoResult::InvalidArgument;
+    }
+    _activeVideoStream = videoStreamIndex;
+    if (_provideMultiAudio)
+    {
+        if (audioStreamIndex != 1 && audioStreamIndex != 2 && audioStreamIndex != -1)
+        {
+            return VideoResult::InvalidArgument;
+        }
+        _activeAudioStream = audioStreamIndex;
+    }
+    else if (audioStreamIndex != -1)
+    {
+        return VideoResult::InvalidArgument;
+    }
+    else
+    {
+        _activeAudioStream = -1;
     }
     return VideoResult::Ok;
 }

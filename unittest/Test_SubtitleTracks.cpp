@@ -38,7 +38,7 @@ TEST_SUITE(SubtitleTracksSuite)
                      static_cast<int>(VideoResult::Ok));
         CHECK(info.hasSubtitles);
         CHECK_INT_EQ(static_cast<int>(info.subtitleTracks.size()), 1);
-        CHECK_INT_EQ(info.subtitleTracks[0].streamIndex, 1);
+        CHECK_INT_EQ(info.subtitleTracks[0].streamIndex, 3);
         CHECK_INT_EQ(static_cast<int>(info.subtitleTracks[0].kind),
                      static_cast<int>(SubtitleKind::Text));
         CHECK(info.subtitleTracks[0].codec == "mock-srt");

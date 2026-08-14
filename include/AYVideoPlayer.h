@@ -17,6 +17,7 @@
 #include <AYVideoMediaInfo.h>
 #include <AYVideoSubtitle.h>
 #include <AYVideoSyncClock.h>
+#include <AYVideoTrack.h>
 #include <AYVideoTypes.h>
 #include <IAYVideoBackendFactory.h>
 #include <IAYVideoDecoder.h>
@@ -164,6 +165,18 @@ public:
     VideoResult setActiveSubtitleTrack(int32_t index) noexcept;
     int32_t activeSubtitleTrack() const noexcept;
 
+    // V4 N-10: A/V track discovery + deferred selection (applied on next
+    // play/seek via demuxer setActiveStreamIndices). Seamless mid-play
+    // hot-swap without flush is out of scope.
+    uint32_t videoTrackCount() const noexcept;
+    uint32_t audioTrackCount() const noexcept;
+    VideoResult getVideoTrack(uint32_t index, VideoTrackInfo& out) const;
+    VideoResult getAudioTrack(uint32_t index, AudioTrackInfo& out) const;
+    VideoResult setActiveVideoTrack(int32_t index) noexcept;
+    VideoResult setActiveAudioTrack(int32_t index) noexcept;
+    int32_t activeVideoTrack() const noexcept;
+    int32_t activeAudioTrack() const noexcept;
+
     // Presentation clock position (EngineClock or AudioMaster).
     ayt::time::Duration position() const noexcept;
     SyncSource syncSource() const noexcept;
@@ -187,6 +200,7 @@ private:
     bool ensureAudioBridge() noexcept;         // openStream + playStream
     void pumpAudioToEngine() noexcept;         // AudioQueue → streamPush
     bool presentDueFrame(VideoFrame& out);     // drift-aware presentation
+    VideoResult applyActiveTracks() noexcept;  // V4 N-10 demux remap + info refresh
     static ayt::time::Duration audioMasterThunk(void* user) noexcept;
 
     PlayerState _state = PlayerState::Idle;
@@ -222,6 +236,8 @@ private:
     // V4: selected subtitle track index into MediaInfo::subtitleTracks,
     // or -1 when off. Selection only — no cue pipeline yet.
     int32_t _activeSubtitleTrack = -1;
+    int32_t _activeVideoTrack = 0;   // index into MediaInfo::videoTracks
+    int32_t _activeAudioTrack = 0;   // index into MediaInfo::audioTracks (-1 off)
 
     // AYAudio PCM bridge (not owned). Handles are Invalid* when inactive.
     ayt::audio::AudioEngine* _audioEngine = nullptr;

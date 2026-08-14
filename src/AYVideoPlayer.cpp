@@ -101,6 +101,8 @@ AYVideoPlayer::AYVideoPlayer(AYVideoPlayer&& other) noexcept
     _clock = std::move(other._clock);
     _minPresentPts = other._minPresentPts;
     _activeSubtitleTrack = other._activeSubtitleTrack;
+    _activeVideoTrack = other._activeVideoTrack;
+    _activeAudioTrack = other._activeAudioTrack;
     _audioEngine = other._audioEngine;
     _audioStreamId = other._audioStreamId;
     _audioVoice = other._audioVoice;
@@ -109,6 +111,8 @@ AYVideoPlayer::AYVideoPlayer(AYVideoPlayer&& other) noexcept
     other._audioStreamId = 0;
     other._audioVoice = 0;
     other._activeSubtitleTrack = -1;
+    other._activeVideoTrack = 0;
+    other._activeAudioTrack = 0;
     other._state = PlayerState::Stopped;
 }
 
@@ -141,6 +145,8 @@ AYVideoPlayer& AYVideoPlayer::operator=(AYVideoPlayer&& other) noexcept
     _clock = std::move(other._clock);
     _minPresentPts = other._minPresentPts;
     _activeSubtitleTrack = other._activeSubtitleTrack;
+    _activeVideoTrack = other._activeVideoTrack;
+    _activeAudioTrack = other._activeAudioTrack;
     _audioEngine = other._audioEngine;
     _audioStreamId = other._audioStreamId;
     _audioVoice = other._audioVoice;
@@ -149,6 +155,8 @@ AYVideoPlayer& AYVideoPlayer::operator=(AYVideoPlayer&& other) noexcept
     other._audioStreamId = 0;
     other._audioVoice = 0;
     other._activeSubtitleTrack = -1;
+    other._activeVideoTrack = 0;
+    other._activeAudioTrack = 0;
     other._state = PlayerState::Stopped;
     return *this;
 }
@@ -498,6 +506,8 @@ VideoResult AYVideoPlayer::open(const std::string& path)
     _presented.reset();
     _minPresentPts = {};
     _activeSubtitleTrack = -1;
+    _activeVideoTrack = _info.videoTracks.empty() ? -1 : 0;
+    _activeAudioTrack = _info.audioTracks.empty() ? -1 : 0;
     _lastResult = VideoResult::Ok;
     transition(PlayerState::Opening, PlayerState::Ready);
     return VideoResult::Ok;
@@ -532,6 +542,7 @@ VideoResult AYVideoPlayer::play()
         }
         _minPresentPts = {};
         _clock.reset(ayt::time::Duration{});
+        (void)applyActiveTracks();
         (void)ensureAudioBridge();
         startLoop();
         if (_audioEngine)
@@ -569,6 +580,7 @@ VideoResult AYVideoPlayer::play()
             }
             teardownAudioBridge();
             _clock.reset(pos);
+            (void)applyActiveTracks();
             (void)ensureAudioBridge();
             startLoop();
         }
@@ -636,6 +648,8 @@ VideoResult AYVideoPlayer::stop()
     _path.clear();
     _minPresentPts = {};
     _activeSubtitleTrack = -1;
+    _activeVideoTrack = 0;
+    _activeAudioTrack = 0;
     _clock.reset();
     transition(_state, PlayerState::Stopped);
     return VideoResult::Ok;
@@ -677,6 +691,7 @@ VideoResult AYVideoPlayer::seek(const ayt::time::Duration& target)
 
     if (preSeek == PlayerState::Playing)
     {
+        (void)applyActiveTracks();
         (void)ensureAudioBridge();
         startLoop();
         if (_audioEngine)
@@ -785,6 +800,137 @@ VideoResult AYVideoPlayer::setActiveSubtitleTrack(int32_t index) noexcept
 int32_t AYVideoPlayer::activeSubtitleTrack() const noexcept
 {
     return _activeSubtitleTrack;
+}
+
+uint32_t AYVideoPlayer::videoTrackCount() const noexcept
+{
+    return static_cast<uint32_t>(_info.videoTracks.size());
+}
+
+uint32_t AYVideoPlayer::audioTrackCount() const noexcept
+{
+    return static_cast<uint32_t>(_info.audioTracks.size());
+}
+
+VideoResult AYVideoPlayer::getVideoTrack(uint32_t index, VideoTrackInfo& out) const
+{
+    if (_state != PlayerState::Ready && _state != PlayerState::Playing
+        && _state != PlayerState::Paused && _state != PlayerState::Seeking)
+    {
+        return VideoResult::InvalidState;
+    }
+    if (index >= _info.videoTracks.size())
+    {
+        return VideoResult::InvalidArgument;
+    }
+    out = _info.videoTracks[index];
+    return VideoResult::Ok;
+}
+
+VideoResult AYVideoPlayer::getAudioTrack(uint32_t index, AudioTrackInfo& out) const
+{
+    if (_state != PlayerState::Ready && _state != PlayerState::Playing
+        && _state != PlayerState::Paused && _state != PlayerState::Seeking)
+    {
+        return VideoResult::InvalidState;
+    }
+    if (index >= _info.audioTracks.size())
+    {
+        return VideoResult::InvalidArgument;
+    }
+    out = _info.audioTracks[index];
+    return VideoResult::Ok;
+}
+
+VideoResult AYVideoPlayer::setActiveVideoTrack(int32_t index) noexcept
+{
+    if (_state != PlayerState::Ready && _state != PlayerState::Playing
+        && _state != PlayerState::Paused && _state != PlayerState::Seeking)
+    {
+        _lastResult = VideoResult::InvalidState;
+        return VideoResult::InvalidState;
+    }
+    if (index < 0
+        || index >= static_cast<int32_t>(_info.videoTracks.size()))
+    {
+        _lastResult = VideoResult::InvalidArgument;
+        return VideoResult::InvalidArgument;
+    }
+    _activeVideoTrack = index;
+    _lastResult = VideoResult::Ok;
+    return VideoResult::Ok;
+}
+
+VideoResult AYVideoPlayer::setActiveAudioTrack(int32_t index) noexcept
+{
+    if (_state != PlayerState::Ready && _state != PlayerState::Playing
+        && _state != PlayerState::Paused && _state != PlayerState::Seeking)
+    {
+        _lastResult = VideoResult::InvalidState;
+        return VideoResult::InvalidState;
+    }
+    if (index < -1
+        || index >= static_cast<int32_t>(_info.audioTracks.size()))
+    {
+        _lastResult = VideoResult::InvalidArgument;
+        return VideoResult::InvalidArgument;
+    }
+    _activeAudioTrack = index;
+    _lastResult = VideoResult::Ok;
+    return VideoResult::Ok;
+}
+
+int32_t AYVideoPlayer::activeVideoTrack() const noexcept
+{
+    return _activeVideoTrack;
+}
+
+int32_t AYVideoPlayer::activeAudioTrack() const noexcept
+{
+    return _activeAudioTrack;
+}
+
+VideoResult AYVideoPlayer::applyActiveTracks() noexcept
+{
+    if (!_demuxer)
+    {
+        return VideoResult::NotInitialized;
+    }
+    int32_t vStream = -1;
+    int32_t aStream = -1;
+    if (_activeVideoTrack >= 0
+        && _activeVideoTrack < static_cast<int32_t>(_info.videoTracks.size()))
+    {
+        vStream = _info.videoTracks[static_cast<size_t>(_activeVideoTrack)]
+                      .streamIndex;
+    }
+    if (_activeAudioTrack >= 0
+        && _activeAudioTrack < static_cast<int32_t>(_info.audioTracks.size()))
+    {
+        aStream = _info.audioTracks[static_cast<size_t>(_activeAudioTrack)]
+                      .streamIndex;
+    }
+    if (vStream < 0)
+    {
+        return VideoResult::StreamNotFound;
+    }
+    const VideoResult r = _demuxer->setActiveStreamIndices(vStream, aStream);
+    if (r != VideoResult::Ok)
+    {
+        return r;
+    }
+    // Refresh scalar MediaInfo from the remapped active streams.
+    MediaInfo refreshed;
+    if (_demuxer->getMediaInfo(refreshed) == VideoResult::Ok)
+    {
+        // Preserve track lists (selection indices stay valid).
+        refreshed.videoTracks = _info.videoTracks;
+        refreshed.audioTracks = _info.audioTracks;
+        refreshed.subtitleTracks = _info.subtitleTracks;
+        refreshed.hasSubtitles = _info.hasSubtitles;
+        _info = std::move(refreshed);
+    }
+    return VideoResult::Ok;
 }
 
 ayt::time::Duration AYVideoPlayer::position() const noexcept

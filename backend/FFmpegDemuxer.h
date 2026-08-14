@@ -36,6 +36,8 @@ public:
     VideoResult getMediaInfo(MediaInfo& outInfo) const override;
     VideoResult readNextPacket(VideoPacket& outPacket) override;
     VideoResult seek(const ayt::time::Duration& target) override;
+    VideoResult setActiveStreamIndices(int32_t videoStreamIndex,
+                                       int32_t audioStreamIndex) override;
 
     // Diagnostics (tests): last av* error string, or "".
     const char* lastErrorString() const noexcept;

@@ -243,23 +243,86 @@ VideoResult FFmpegDemuxer::getMediaInfo(MediaInfo& outInfo) const
                               1'000'000.0; // AV_TIME_BASE = 1e6 µs
     }
 
-    // V4: enumerate soft-subtitle streams (discovery only; packets still
-    // skipped in readNextPacket).
+    // V4: enumerate all video / audio / subtitle streams.
     for (unsigned i = 0; i < ctx->nb_streams; ++i)
     {
         const AVStream* st = ctx->streams[i];
-        if (!st || !st->codecpar
-            || st->codecpar->codec_type != AVMEDIA_TYPE_SUBTITLE)
+        if (!st || !st->codecpar)
+        {
+            continue;
+        }
+        AVDictionaryEntry* lang =
+            av_dict_get(st->metadata, "language", nullptr, 0);
+        AVDictionaryEntry* title =
+            av_dict_get(st->metadata, "title", nullptr, 0);
+        const char* codecName = nullptr;
+        if (const AVCodec* codec = avcodec_find_decoder(st->codecpar->codec_id))
+        {
+            codecName = codec->name;
+        }
+
+        if (st->codecpar->codec_type == AVMEDIA_TYPE_VIDEO)
+        {
+            VideoTrackInfo track{};
+            track.streamIndex = static_cast<int32_t>(i);
+            if (codecName)
+            {
+                track.codec = codecName;
+            }
+            if (lang && lang->value)
+            {
+                track.language = lang->value;
+            }
+            if (title && title->value)
+            {
+                track.title = title->value;
+            }
+            track.width = st->codecpar->width;
+            track.height = st->codecpar->height;
+            AVRational fps = st->avg_frame_rate;
+            if (fps.num <= 0 || fps.den <= 0)
+            {
+                fps = st->r_frame_rate;
+            }
+            if (fps.num > 0 && fps.den > 0)
+            {
+                track.frameRate = static_cast<double>(fps.num) /
+                                  static_cast<double>(fps.den);
+            }
+            outInfo.videoTracks.push_back(track);
+            continue;
+        }
+        if (st->codecpar->codec_type == AVMEDIA_TYPE_AUDIO)
+        {
+            AudioTrackInfo track{};
+            track.streamIndex = static_cast<int32_t>(i);
+            if (codecName)
+            {
+                track.codec = codecName;
+            }
+            if (lang && lang->value)
+            {
+                track.language = lang->value;
+            }
+            if (title && title->value)
+            {
+                track.title = title->value;
+            }
+            track.sampleRate = st->codecpar->sample_rate;
+            track.channels = st->codecpar->ch_layout.nb_channels;
+            outInfo.audioTracks.push_back(track);
+            continue;
+        }
+        if (st->codecpar->codec_type != AVMEDIA_TYPE_SUBTITLE)
         {
             continue;
         }
         SubtitleTrackInfo track{};
         track.streamIndex = static_cast<int32_t>(i);
-        if (const AVCodec* codec = avcodec_find_decoder(st->codecpar->codec_id))
+        if (codecName)
         {
-            track.codec = codec->name;
+            track.codec = codecName;
         }
-        // Heuristic kind from codec id / name.
         switch (st->codecpar->codec_id)
         {
         case AV_CODEC_ID_ASS:
@@ -281,14 +344,10 @@ VideoResult FFmpegDemuxer::getMediaInfo(MediaInfo& outInfo) const
             track.kind = SubtitleKind::Unknown;
             break;
         }
-        AVDictionaryEntry* lang =
-            av_dict_get(st->metadata, "language", nullptr, 0);
         if (lang && lang->value)
         {
             track.language = lang->value;
         }
-        AVDictionaryEntry* title =
-            av_dict_get(st->metadata, "title", nullptr, 0);
         if (title && title->value)
         {
             track.title = title->value;
@@ -362,6 +421,49 @@ VideoResult FFmpegDemuxer::seek(const ayt::time::Duration& target)
         return VideoResult::DemuxError;
     }
     avformat_flush(_impl->formatContext);
+    return VideoResult::Ok;
+}
+
+VideoResult FFmpegDemuxer::setActiveStreamIndices(int32_t videoStreamIndex,
+                                                   int32_t audioStreamIndex)
+{
+    if (!_impl->open || !_impl->formatContext)
+    {
+        return VideoResult::NotInitialized;
+    }
+    const AVFormatContext* ctx = _impl->formatContext;
+    if (videoStreamIndex >= 0)
+    {
+        if (static_cast<unsigned>(videoStreamIndex) >= ctx->nb_streams
+            || !ctx->streams[videoStreamIndex]
+            || ctx->streams[videoStreamIndex]->codecpar->codec_type
+                   != AVMEDIA_TYPE_VIDEO)
+        {
+            return VideoResult::InvalidArgument;
+        }
+        _impl->videoStreamIndex = videoStreamIndex;
+        _impl->videoTimebase = ctx->streams[videoStreamIndex]->time_base;
+    }
+    else
+    {
+        return VideoResult::InvalidArgument; // video required
+    }
+    if (audioStreamIndex >= 0)
+    {
+        if (static_cast<unsigned>(audioStreamIndex) >= ctx->nb_streams
+            || !ctx->streams[audioStreamIndex]
+            || ctx->streams[audioStreamIndex]->codecpar->codec_type
+                   != AVMEDIA_TYPE_AUDIO)
+        {
+            return VideoResult::InvalidArgument;
+        }
+        _impl->audioStreamIndex = audioStreamIndex;
+        _impl->audioTimebase = ctx->streams[audioStreamIndex]->time_base;
+    }
+    else
+    {
+        _impl->audioStreamIndex = -1;
+    }
     return VideoResult::Ok;
 }
 
