@@ -98,10 +98,11 @@ public:
     // Stopped.
     VideoResult stop();
 
-    // Absolute seek. V1: synchronous dwell with the §8.3 flush sequence
+    // Absolute seek. Synchronous dwell with the §8.3 flush sequence
     // (join decode thread -> clear queue -> decoder flush -> demuxer
-    // seek -> restart when previously playing). Keyframe-level in V1
-    // (frame-exact positioning lands in V4, design.md §7.3).
+    // keyframe seek -> restart when previously playing). V4: frames with
+    // pts < target are discarded before presentation so the first
+    // pullFrame lands within ±1 CFR frame of `target` (design.md §7.3).
     VideoResult seek(const ayt::time::Duration& target);
 
     void setLoop(bool loop) noexcept;
@@ -206,6 +207,9 @@ private:
     std::unique_ptr<QueuedFrame> _presented;   // last delivered frame's
                                                // pixel storage (§4.5)
     AYVideoSyncClock _clock;
+    // V4 seek accuracy: drop decoded frames with pts < this floor
+    // (set by seek(); cleared on open/stop / play-from-Ready restart).
+    ayt::time::Duration _minPresentPts{};
 
     // AYAudio PCM bridge (not owned). Handles are Invalid* when inactive.
     ayt::audio::AudioEngine* _audioEngine = nullptr;

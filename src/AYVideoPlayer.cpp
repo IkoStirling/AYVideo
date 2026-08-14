@@ -333,12 +333,21 @@ bool AYVideoPlayer::presentDueFrame(VideoFrame& out)
     auto isLate = [&](const ayt::time::Duration& pts) {
         return pts + tol < pos;
     };
+    // V4: after keyframe seek, drop pre-target frames before they can
+    // present (clock is already at `target`, so isLate alone still lets
+    // through frames within one driftTolerance of the target).
+    auto isBeforeSeekFloor = [&](const ayt::time::Duration& pts) {
+        return pts < _minPresentPts;
+    };
+    auto shouldDrop = [&](const ayt::time::Duration& pts) {
+        return isLate(pts) || isBeforeSeekFloor(pts);
+    };
     auto isDue = [&](const ayt::time::Duration& pts) {
         return pts <= pos;
     };
 
-    // Drop late frames (audio-master drift correction, §9.2).
-    while (_held && isLate(_held->frame.pts))
+    // Drop late / pre-seek frames (audio-master drift §9.2 + V4 floor).
+    while (_held && shouldDrop(_held->frame.pts))
     {
         _held.reset();
         QueuedFrame qf;
@@ -368,7 +377,7 @@ bool AYVideoPlayer::presentDueFrame(VideoFrame& out)
     if (_queue && _queue->tryPop(qf))
     {
         _held = std::make_unique<QueuedFrame>(std::move(qf));
-        while (_held && isLate(_held->frame.pts))
+        while (_held && shouldDrop(_held->frame.pts))
         {
             _held.reset();
             QueuedFrame next;
@@ -481,6 +490,7 @@ VideoResult AYVideoPlayer::open(const std::string& path)
     }
     _held.reset();
     _presented.reset();
+    _minPresentPts = {};
     _lastResult = VideoResult::Ok;
     transition(PlayerState::Opening, PlayerState::Ready);
     return VideoResult::Ok;
@@ -513,6 +523,7 @@ VideoResult AYVideoPlayer::play()
         {
             (void)_demuxer->seek(ayt::time::Duration{});
         }
+        _minPresentPts = {};
         _clock.reset(ayt::time::Duration{});
         (void)ensureAudioBridge();
         startLoop();
@@ -525,7 +536,10 @@ VideoResult AYVideoPlayer::play()
     }
     if (_state == PlayerState::Paused)
     {
-        if (_loop && _loop->finished())
+        // Restart when the loop is gone (seek-while-paused tears it
+        // down) or already finished — resume at the current clock
+        // position so V4 seek floors survive into play().
+        if (!_loop || _loop->finished())
         {
             teardownPipeline();
             const ayt::time::Duration pos = _clock.position();
@@ -613,6 +627,7 @@ VideoResult AYVideoPlayer::stop()
     }
     _info = MediaInfo{};
     _path.clear();
+    _minPresentPts = {};
     _clock.reset();
     transition(_state, PlayerState::Stopped);
     return VideoResult::Ok;
@@ -647,6 +662,9 @@ VideoResult AYVideoPlayer::seek(const ayt::time::Duration& target)
             return r;
         }
     }
+    // V4: floor presentation at `target` (keyframe seek may rewind;
+    // presentDueFrame discards pts < floor).
+    _minPresentPts = target;
     _clock.reset(target);
 
     if (preSeek == PlayerState::Playing)

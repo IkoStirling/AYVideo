@@ -188,6 +188,42 @@ TEST_SUITE(PlayerPlaybackSuite)
                      static_cast<int>(VideoResult::Ok));
     }
 
+    TEST_CASE(PlayerSeekLandsNearTargetPts) {
+        // V4 slice-1: pause → seek(200ms) → play; first presented frame
+        // must be within ±1 CFR frame (40ms) of the seek target.
+        PlaybackFixture fx;
+        CHECK_INT_EQ(static_cast<int>(fx.player.play()),
+                     static_cast<int>(VideoResult::Ok));
+        VideoFrame f;
+        (void)fx.advanceAndPull(40'000, f); // frame 0
+        (void)fx.advanceAndPull(40'000, f); // frame 1
+
+        CHECK_INT_EQ(static_cast<int>(fx.player.pause()),
+                     static_cast<int>(VideoResult::Ok));
+        const ayt::time::Duration target =
+            ayt::time::Duration::fromUs(200'000); // frame 5 @ 25fps
+        CHECK_INT_EQ(static_cast<int>(fx.player.seek(target)),
+                     static_cast<int>(VideoResult::Ok));
+        CHECK_INT_EQ(static_cast<int>(fx.player.state()),
+                     static_cast<int>(PlayerState::Paused));
+        CHECK_INT_EQ(fx.player.position().toUs(),
+                     static_cast<std::int64_t>(200'000));
+
+        CHECK_INT_EQ(static_cast<int>(fx.player.play()),
+                     static_cast<int>(VideoResult::Ok));
+        // Clock is already at 200ms; first due frame after discard floor.
+        const VideoResult r = pullWithRetry(fx.player, f, 4000);
+        CHECK_INT_EQ(static_cast<int>(r), static_cast<int>(VideoResult::Ok));
+        CHECK_TRUE(f.data != nullptr);
+        const std::int64_t ptsUs = f.pts.toUs();
+        const std::int64_t delta = ptsUs >= 200'000 ? ptsUs - 200'000
+                                                    : 200'000 - ptsUs;
+        CHECK_TRUE(delta <= 40'000);
+        CHECK_TRUE(ptsUs >= 200'000); // V4 floor: no pre-target frames
+        CHECK_INT_EQ(static_cast<int>(fx.player.stop()),
+                     static_cast<int>(VideoResult::Ok));
+    }
+
     TEST_CASE(PlayerSeekDuringPlaybackRestarts) {
         PlaybackFixture fx;
         CHECK_INT_EQ(static_cast<int>(fx.player.play()),
