@@ -184,6 +184,23 @@ public:
     // The result of the last failed operation (diagnostic; Failed state).
     VideoResult lastResult() const noexcept;
 
+    // V4 memory-pressure diagnostics (design.md §6.3 / §16).
+    struct QueueStats
+    {
+        uint32_t videoSize = 0;
+        uint32_t videoCapacity = 0;
+        uint64_t videoDropped = 0;
+        uint32_t audioSize = 0;
+        uint32_t audioCapacity = 0;
+        uint64_t audioDropped = 0;
+    };
+    QueueStats queueStats() const noexcept;
+
+    // Preview / stress: switch the video FrameQueue overflow policy.
+    // Default remains Block. Safe while Idle/Ready/Stopped (or after
+    // pause with decode loop torn down); IgnoredInvalid while Playing.
+    VideoResult setFrameQueueOverflowPolicy(FrameQueueOverflowPolicy policy) noexcept;
+
 private:
     // State transition table helper (design.md §10.4): returns Ok and
     // applies `to` when `from -> to` is legal, InvalidState otherwise.
@@ -238,6 +255,8 @@ private:
     int32_t _activeSubtitleTrack = -1;
     int32_t _activeVideoTrack = 0;   // index into MediaInfo::videoTracks
     int32_t _activeAudioTrack = 0;   // index into MediaInfo::audioTracks (-1 off)
+    FrameQueueOverflowPolicy _frameOverflowPolicy =
+        FrameQueueOverflowPolicy::Block;
 
     // AYAudio PCM bridge (not owned). Handles are Invalid* when inactive.
     ayt::audio::AudioEngine* _audioEngine = nullptr;

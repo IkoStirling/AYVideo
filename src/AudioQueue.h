@@ -95,6 +95,7 @@ public:
                 old.data = QueuedAudio{};
                 old.sequence.store(tail + _capacity, std::memory_order_release);
                 _tail.store(tail + 1, std::memory_order_relaxed);
+                _dropped.fetch_add(1, std::memory_order_relaxed);
             }
             else
             {
@@ -152,6 +153,20 @@ public:
                == _head.load(std::memory_order_relaxed);
     }
 
+    uint32_t capacity() const noexcept { return _capacity; }
+
+    uint32_t size() const noexcept
+    {
+        const uint64_t head = _head.load(std::memory_order_relaxed);
+        const uint64_t tail = _tail.load(std::memory_order_relaxed);
+        return static_cast<uint32_t>(head - tail);
+    }
+
+    uint64_t dropped() const noexcept
+    {
+        return _dropped.load(std::memory_order_relaxed);
+    }
+
 private:
     struct Slot
     {
@@ -164,6 +179,7 @@ private:
     std::unique_ptr<Slot[]> _slots;
     std::atomic<uint64_t> _head{0};
     std::atomic<uint64_t> _tail{0};
+    std::atomic<uint64_t> _dropped{0};
 };
 
 } // namespace ayt::video

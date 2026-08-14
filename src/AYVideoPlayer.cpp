@@ -76,6 +76,7 @@ AYVideoPlayer::AYVideoPlayer(
     , _audioQueue(std::make_unique<AudioQueue>())
     , _clock(now)
 {
+    _queue->setOverflowPolicy(_frameOverflowPolicy);
 }
 
 AYVideoPlayer::AYVideoPlayer(AYVideoPlayer&& other) noexcept
@@ -1031,6 +1032,41 @@ VideoResult AYVideoPlayer::pullFrame(VideoFrame& out)
 VideoResult AYVideoPlayer::lastResult() const noexcept
 {
     return _lastResult;
+}
+
+AYVideoPlayer::QueueStats AYVideoPlayer::queueStats() const noexcept
+{
+    QueueStats s;
+    if (_queue)
+    {
+        s.videoSize = _queue->size();
+        s.videoCapacity = _queue->capacity();
+        s.videoDropped = _queue->dropped();
+    }
+    if (_audioQueue)
+    {
+        s.audioSize = _audioQueue->size();
+        s.audioCapacity = _audioQueue->capacity();
+        s.audioDropped = _audioQueue->dropped();
+    }
+    return s;
+}
+
+VideoResult AYVideoPlayer::setFrameQueueOverflowPolicy(
+    FrameQueueOverflowPolicy policy) noexcept
+{
+    if (_state == PlayerState::Playing || _state == PlayerState::Seeking)
+    {
+        _lastResult = VideoResult::InvalidState;
+        return VideoResult::InvalidState;
+    }
+    _frameOverflowPolicy = policy;
+    if (_queue)
+    {
+        _queue->setOverflowPolicy(policy);
+    }
+    _lastResult = VideoResult::Ok;
+    return VideoResult::Ok;
 }
 
 } // namespace ayt::video

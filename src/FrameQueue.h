@@ -6,8 +6,9 @@
 // points into QueuedFrame.pixels — safe to move by value, never copy.
 //
 // Contract (§6.3):
-//   * push()   — producer side, BLOCKING backpressure when full
-//                (queue depth 4, §16.3); never fails.
+//   * push()   — producer side; default BLOCKING backpressure when full
+//                (queue depth 4, §16.3). Optional DropOldest (V4) advances
+//                the tail instead of spinning.
 //   * tryPop() — consumer side, non-blocking; false = empty, which maps
 //                to the §6.2 "Ok + null data" semantics. The queue never
 //                reports EOS — EOS only comes from the decoder flush.
@@ -21,6 +22,7 @@
 // runtime check (design.md §4.4).
 
 #include <AYVideoFrame.h>
+#include <AYVideoTypes.h>
 
 #include <atomic>
 #include <cstdint>
@@ -93,10 +95,19 @@ public:
         }
     }
 
+    void setOverflowPolicy(FrameQueueOverflowPolicy policy) noexcept
+    {
+        _overflowPolicy = policy;
+    }
+    FrameQueueOverflowPolicy overflowPolicy() const noexcept
+    {
+        return _overflowPolicy;
+    }
+
     // Producer: copies the frame payload into the ring. Blocks while
-    // full (backpressure). Must not be called from the consumer thread.
-    // Null-payload frames are dropped (defensive; the decode loop only
-    // pushes frames with data — §6.2).
+    // full (backpressure) unless DropOldest is set. Must not be called
+    // from the consumer thread. Null-payload frames are dropped
+    // (defensive; the decode loop only pushes frames with data — §6.2).
     void push(const VideoFrame& frame)
     {
         if (frame.data == nullptr || frame.dataSize == 0)
@@ -110,11 +121,42 @@ public:
         {
             return;
         }
-        const uint64_t head = _head.load(std::memory_order_relaxed);
+        uint64_t head = _head.load(std::memory_order_relaxed);
         Slot& slot = _slots[head & _mask];
-        while (slot.sequence.load(std::memory_order_acquire) != head)
+        if (slot.sequence.load(std::memory_order_acquire) != head)
         {
-            std::this_thread::yield();
+            if (_overflowPolicy == FrameQueueOverflowPolicy::DropOldest)
+            {
+                const uint64_t tail = _tail.load(std::memory_order_relaxed);
+                Slot& old = _slots[tail & _mask];
+                if (old.sequence.load(std::memory_order_acquire) == tail + 1)
+                {
+                    old.data = QueuedFrame{};
+                    old.sequence.store(tail + _capacity, std::memory_order_release);
+                    _tail.store(tail + 1, std::memory_order_relaxed);
+                    _dropped.fetch_add(1, std::memory_order_relaxed);
+                }
+                else
+                {
+                    return;
+                }
+                head = _head.load(std::memory_order_relaxed);
+                Slot& dest = _slots[head & _mask];
+                if (dest.sequence.load(std::memory_order_acquire) != head)
+                {
+                    return;
+                }
+                dest.data.pixels.assign(frame.data, frame.data + frame.dataSize);
+                dest.data.frame = frame;
+                dest.data.frame.data = dest.data.pixels.data();
+                dest.sequence.store(head + 1, std::memory_order_release);
+                _head.store(head + 1, std::memory_order_relaxed);
+                return;
+            }
+            while (slot.sequence.load(std::memory_order_acquire) != head)
+            {
+                std::this_thread::yield();
+            }
         }
 
         slot.data.pixels.assign(frame.data, frame.data + frame.dataSize);
@@ -169,6 +211,18 @@ public:
 
     uint32_t capacity() const noexcept { return _capacity; }
 
+    uint32_t size() const noexcept
+    {
+        const uint64_t head = _head.load(std::memory_order_relaxed);
+        const uint64_t tail = _tail.load(std::memory_order_relaxed);
+        return static_cast<uint32_t>(head - tail);
+    }
+
+    uint64_t dropped() const noexcept
+    {
+        return _dropped.load(std::memory_order_relaxed);
+    }
+
 private:
     struct Slot
     {
@@ -178,9 +232,11 @@ private:
 
     uint32_t _capacity = 0;
     uint32_t _mask = 0;
+    FrameQueueOverflowPolicy _overflowPolicy = FrameQueueOverflowPolicy::Block;
     std::unique_ptr<Slot[]> _slots;
     std::atomic<uint64_t> _head{0};  // producer write index
     std::atomic<uint64_t> _tail{0};  // consumer read index
+    std::atomic<uint64_t> _dropped{0};
 };
 
 } // namespace ayt::video

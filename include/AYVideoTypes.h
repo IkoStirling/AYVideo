@@ -55,4 +55,11 @@ enum class VideoPixelFormat : uint8_t
 
 const char* toString(VideoPixelFormat format) noexcept;
 
+// V4 memory pressure: FrameQueue overflow policy (default Block).
+enum class FrameQueueOverflowPolicy : uint8_t
+{
+    Block = 0,       // spin+yield backpressure (V1)
+    DropOldest = 1,  // drop tail when full (preview / stress)
+};
+
 } // namespace ayt::video
