@@ -5,7 +5,9 @@
 // successful open(). Plain value type — safe to copy across threads
 // (player reads it, demux thread writes it once during open).
 
+#include <cstdint>
 #include <string>
+#include <vector>
 
 namespace ayt::video
 {
@@ -28,6 +30,11 @@ struct MediaInfo
     // on this string (design.md §8.1).
     std::string videoCodec;
     std::string audioCodec;
+
+    // Codec extradata (AVCodecParameters.extradata) — required by many
+    // codecs (mpeg4 VOL, h264 SPS/PPS in mp4) before the first feed.
+    // Empty when the container carries in-band headers only.
+    std::vector<uint8_t> videoExtradata;
 };
 
 } // namespace ayt::video

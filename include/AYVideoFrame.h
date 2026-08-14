@@ -38,16 +38,21 @@ struct VideoPacket
 // until the next dequeueFrame() / flush() / close() on the same decoder.
 // dequeueFrame() returning Ok with data == nullptr means "no frame ready
 // yet" (codec still producing output); callers must not treat it as EOS.
+//
+// dataSize covers ALL planes (total bytes; V1 amendment A-05). For
+// planar formats (I420/NV12) the per-plane byte offsets from `data` are
+// in planeOffset[0..2] (planeOffset[0] == 0); `stride` is plane 0's row
+// stride. Single-plane formats (RGBA8/BGRA8) leave the offsets 0.
 // ---------------------------------------------------------------------------
 struct VideoFrame
 {
     const uint8_t* data = nullptr;
-    uint32_t dataSize = 0;
+    uint32_t dataSize = 0;         // total bytes of all planes
 
     int32_t width = 0;
     int32_t height = 0;
-    uint32_t stride = 0;           // bytes per row, plane 0 (all planes
-                                   // packed contiguously in data)
+    uint32_t stride = 0;           // bytes per row, plane 0
+    uint32_t planeOffset[3] = {0, 0, 0};  // plane byte offsets from data
     VideoPixelFormat format = VideoPixelFormat::Unknown;
 
     ayt::time::Duration pts{};     // presentation timestamp (from packet)

@@ -25,7 +25,10 @@ std::unique_ptr<IAYVideoDemuxer> makeMockDemuxer(int32_t packetCount);
 std::unique_ptr<IAYVideoDecoder> makeNullDecoder();
 std::unique_ptr<IAYVideoDecoder> makeMockDecoder(int32_t frameCount);
 
-// V1: FFmpeg backends (design.md §8.1) — added when the ffmpeg link
-// lands; declared here so consumers can forward-declare the wiring.
+// V1: FFmpeg backends (design.md §7/§8). Constructed via libav*; the
+// concrete types live in backend/ (ffmpeg-free headers, PIMPL) so the
+// public surface stays clean (G-01).
+std::unique_ptr<IAYVideoDemuxer> makeFFmpegDemuxer();
+std::unique_ptr<IAYVideoDecoder> makeFFmpegDecoder();
 
 } // namespace ayt::video

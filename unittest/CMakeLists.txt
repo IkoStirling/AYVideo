@@ -43,6 +43,21 @@ target_link_libraries(${TEST_TARGET} PRIVATE
     AYTime
 )
 
+# V1 FFmpeg backends (design.md §7/§8) — Q7a synthetic-byte stub:
+# the test generates its own mp4 via libavformat muxing, so these TUs
+# link libav* PRIVATEly via the module-local AYVideo_FFmpeg INTERFACE
+# target (parent CMakeLists creates it when FFMPEG_FOUND).
+if(AYVIDEO_HAS_FFMPEG)
+    target_sources(${TEST_TARGET} PRIVATE
+        FFmpegTestMedia.cpp      # shared synthetic mp4 generator (Q7a)
+        Test_FFmpegDemuxer.cpp   # FFmpegDemuxer against generated mp4
+        Test_FFmpegDecoder.cpp   # FFmpegDecoder feed/dequeue/flush/EOS
+        Test_PlayerPlayback.cpp  # full pipeline + clock-gated presentation
+        Test_DecodeThread.cpp    # §16.3 stress: 400 frames x 3 rounds
+    )
+    target_link_libraries(${TEST_TARGET} PRIVATE AYVideo_FFmpeg)
+endif()
+
 target_include_directories(${TEST_TARGET} PRIVATE
     # Reach backend/*.h through include relative paths (Test_NullBackends.cpp
     # uses `#include "NullDemuxer.h"` from the AYVideo root). The

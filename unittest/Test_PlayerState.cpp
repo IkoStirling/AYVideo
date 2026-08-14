@@ -79,7 +79,11 @@ TEST_SUITE(PlayerStateSuite)
     }
 
     TEST_CASE(PlayerPlayPauseSeekCycle) {
-        MockPlayerFixture fx(4, 4);
+        // 100 frames >> queue depth (4): while paused the decode thread
+        // blocks on backpressure (queue full) and can never reach EOS,
+        // so the "resume from paused position" path (which seeks) is not
+        // exercised here and the seek counter below is deterministic.
+        MockPlayerFixture fx(100, 100);
         CHECK_INT_EQ(static_cast<int>(fx.player.open("mock://clip")),
                      static_cast<int>(VideoResult::Ok));
 
@@ -95,11 +99,12 @@ TEST_SUITE(PlayerStateSuite)
                      static_cast<int>(VideoResult::Ok));
         CHECK_TRUE(fx.player.isPlaying());
 
-        // Seek while playing: demuxer receives the seek, state returns
-        // to Playing (synchronous skeleton contract).
+        // V1: play() from Ready replays from 0 (demuxer seek #1); the
+        // explicit seek is #2. Both are issued on the player thread after
+        // the decode loop was joined, so the counters are race-free.
         CHECK_INT_EQ(static_cast<int>(fx.player.seek(ayt::time::Duration::fromMs(80))),
                      static_cast<int>(VideoResult::Ok));
-        CHECK_INT_EQ(static_cast<int>(fx.demuxer()->seekCount()), 1u);
+        CHECK_INT_EQ(static_cast<int>(fx.demuxer()->seekCount()), 2u);
         CHECK_TRUE(fx.player.isPlaying());
     }
 

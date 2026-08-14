@@ -47,6 +47,13 @@ VideoResult MockDecoder::feedPacket(const VideoPacket& /*packet*/)
     {
         return VideoResult::NotInitialized;
     }
+    // A-12: a real feed after flush clears the drain state and restarts
+    // the scripted frame sequence (seek / loop restart).
+    if (_flushed)
+    {
+        _flushed = false;
+        _emitted = 0;
+    }
     _fedAny = true;
     ++_feedCount;
     return VideoResult::Ok;
@@ -63,12 +70,14 @@ VideoResult MockDecoder::dequeueFrame(VideoFrame& outFrame)
 
     if (!_fedAny)
     {
-        // "No frame ready yet" contract state (design.md §8.3).
-        return VideoResult::Ok;
+        // Flushed + no subsequent feed = drain complete (§8.2 EOS).
+        // Never fed = "no frame ready yet" (§6.2 Ok + null).
+        return _flushed ? VideoResult::EndOfStream : VideoResult::Ok;
     }
     if (_emitted >= _frameCount)
     {
-        return _flushed ? VideoResult::EndOfStream : VideoResult::Ok;
+        // Script exhausted: Ok + null until flush() (§8.2).
+        return VideoResult::Ok;
     }
 
     outFrame.data = _pixels.data();
@@ -91,6 +100,10 @@ VideoResult MockDecoder::flush()
     }
     ++_flushCount;
     _flushed = true;
+    // Drain complete: next dequeue (without a new feed) reports EOS.
+    // _emitted reset happens on the next feedPacket (A-12 seek restart).
+    _fedAny = false;
+    _emitted = 0;
     return VideoResult::Ok;
 }
 

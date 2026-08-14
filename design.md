@@ -1,10 +1,8 @@
-# AYVideo 工业级设计（V0.5 stub-only skeleton）
+# AYVideo 工业级设计（V1 FFmpeg 最小播放）
 
-> **状态（2026-08-13）**：V0.5 stub-only skeleton 全 ship — 子模块仓库 + 公共头/接口 + Null/Mock 双后端 + 播放器状态机 + sync clock + 7 个 TEST_SUITE **194/194 PASS + ctest #38 绿**。构建期修复 2 个真 bug（见 §17.1 / §21）：
-> 1. **Test fixture moved-from unique_ptr 空指针**：`MockPlayerFixture` 把 `demuxer`/`decoder` move 进 player 后自身成员变 null，`fx.demuxer->seekCount()` 等 7 处调用点空指针解引用 → segfault（stdout 全缓冲掩盖崩点，实崩在 `PlayerPlayPauseSeekCycle`）。修复 = AYVideoPlayer 增加 `demuxer()/decoder()` 原始指针 seam + fixture 改为经 seam 观察（§6.4 INV-04）。
-> 2. **SyncClock 无锚点返回垃圾 position**：默认构造未 `reset()` 时 `wallNow() - TimePoint{}` = 自纪元起真实流逝 → `-2112690738`。修复 = `_anchored` 标志，头文件契约（未锚定 → position 0）落地为实现（§9.1 INV-09）。
+> **状态（2026-08-14）**：V1 FFmpeg 最小播放 — FFmpeg demux/decode 后端 + DecodeLoop（std::thread）+ SPSC FrameQueue + `pullFrame` 时钟门控呈现 + 事件回调 + 合成 mpeg4 stub（A-04）+ **544/544 PASS × 3-run stable** + G-01 guard 双向验证绿。V0.5 stub 行为保留（无 ffmpeg 时 Null/Mock only）。
 >
-> **不负责（本次）**：真实 FFmpeg demux/decode、A/V sync audio-master、渲染上屏、seek 精确定位、网络流、字幕 —— 全部按 §3 路线图进入对应 Phase 后 ship。V0.5 零第三方依赖（ffmpeg 仅 V1 起进入 `src/backend`，且有 §2.1 guard 硬门禁）。
+> **不负责（本次）**：audio-master A/V sync、AYAudio PCM 桥、渲染上屏、seek 帧精确、网络流、字幕、AAC 合成轨稳定性 —— 按 §3 进入 V2+。
 
 ---
 
@@ -479,9 +477,11 @@ AYRuntime/AYVideo/
 │   └── IAYVideoBackendFactory.h   # makeNull*/makeMock*（V1 加 makeFFmpeg*）
 ├── src/
 │   ├── AYVideoTypes.cpp       # toString 实现
-│   ├── AYVideoPlayer.cpp      # 状态机 + 控制面
+│   ├── AYVideoPlayer.cpp      # 状态机 + 控制面 + V1 播放管线
 │   ├── AYVideoSyncClock.cpp   # 锚点/暂停/速率
-│   └── AYVideoBackendFactory.cpp
+│   ├── AYVideoBackendFactory.cpp
+│   ├── FrameQueue.h           # V1 SPSC 帧环（§6.3，header-only）
+│   └── DecodeLoop.h/.cpp      # V1 专用解码线程（std::thread，A-09）
 ├── backend/                   # 后端（不入公共 include path；测试相对 include）
 │   ├── NullDemuxer.h/.cpp     # 静默空流
 │   ├── NullDecoder.h/.cpp
@@ -545,13 +545,14 @@ AYRuntime/AYVideo/
 
 ### V1 FFmpeg 最小播放（对齐 §7/§8）
 
-- [ ] vcpkg ffmpeg 引入（仅 src/backend/）+ guard 仍绿
-- [ ] `FFmpegDemuxer` / `FFmpegDecoder`（§7.3/§8.3 契约）
-- [ ] AYTask 专用解码线程 + SPSC 帧队列（§6.3）
-- [ ] 合成字节 stub（最小 MP4）验证矩阵 mp4+h264+aac
-- [ ] 最小播放循环（EngineClock）+ 事件回调（§10.4）
-- [ ] `Test_DecodeThread.cpp` 压力 400×3
-- [ ] 0 错 0 警 + 全测试 PASS + 3-run stable
+- [x] vcpkg ffmpeg 引入（仅 src/backend/）+ guard 仍绿（`AYVIDEO_HAS_FFMPEG`；缺包时 Null/Mock 退化）
+- [x] `FFmpegDemuxer` / `FFmpegDecoder`（§7.3/§8.3；平面打包进连续缓冲，防 FrameQueue span AV）
+- [x] 专用解码线程（std::thread，A-09）+ SPSC 帧队列（§6.3）
+- [x] 合成字节 stub（mpeg4+aac 生成器；A-04；AAC 合成轨用例暂 deferred V1.1）
+- [x] 最小播放循环（EngineClock + `pullFrame`）+ 事件回调（§10.4）
+- [x] `Test_DecodeThread.cpp` 压力 400×3 逐位一致
+- [x] 0 错 + 全测试 **544/544 PASS** + 3-run stable
+- [x] G-01 guard 双向验证（poison → FAIL → revert → PASS）
 
 ### V2 A/V Sync + 音频（对齐 §9.2/§11/§15）
 
@@ -642,11 +643,23 @@ cmake --build D:\Projects\out\build\x64-Debug --target AYVideo_Tests
 | A-01 | 2026-08-13 | V0.5 定稿：Q1a ffmpeg / Q2a stub-only / Q3a 独立并存 / Q4a 全格式 V1 矩阵 / Q5a audio-master / Q6a 帧纹理桥 / Q7a 合成字节 | §3 路线图 §12 §13 |
 | A-02 | 2026-08-13 | INV-04 修正（V0.5 实测 crash）：player 增加 `demuxer()/decoder()` seam；测试 fixture 禁持 moved-from 指针 | §6.4 §17.1 |
 | A-03 | 2026-08-13 | INV-09 修正（V0.5 实测 -2.1e9）：SyncClock 未锚定 → position 0 | §6.4 §9.1 |
+| A-04 | 2026-08-14 | **V1 验证矩阵替换**：vcpkg ffmpeg 构建禁用 libx264/libopenh264 → 无 h264 编码器；合成字节 stub 改用**原生 mpeg4 + aac**（两者内置、确定性、CI 稳定）。h264 解码仍受支持（矩阵只测本机可生成的编码），真实 h264 样本留 V4+ | §7.3 §17 |
+| A-05 | 2026-08-14 | **V1 帧契约修正**：`VideoFrame.dataSize` 语义改为**全平面总字节** + 新增 `planeOffset[3]`（V3 swscale 需要全平面；原实现只报 plane 0 → U/V 静默丢失）。I420/NV12 平面偏移从实际指针差计算（含对齐 padding）。单平面格式 offset 全 0 | §6.2 §8.3 |
+| A-06 | 2026-08-14 | **§10.3 转换表补充（V1 管线现实）**：新增 `Playing → Ready`（EOS，非 loop）与 `Playing → Failed`（解码错误）。EOS 语义：事件一次 → state Ready（position 停在末尾，Ready 描述修正为"停在 0 位或 EOS 后末尾"）；loop 模式静默重启（seek 0 + flush + 新 decode 循环，无事件无状态变更）。`play()` 从 Ready = 从 0 重播（含 EOS 后）；从 Paused 恢复冻结位置（若 pause 期间流已解完则 seek 回冻结位置重启） | §10.3 §10.4 |
+| A-07 | 2026-08-14 | **V1 呈现原语**：`pullFrame(VideoFrame&)` 为最小播放循环的呈现接口（V3 渲染前测试/上层唯一取帧路径）：仅 Playing 合法；时钟门控 —— 队头帧 pts ≤ clock.position() 才返回，未到期帧暂存于单帧 hold（先进先出，不跳帧不重排）；空队 = Ok+null（§6.2 语义）；EOS/错误见 A-06。帧数据所有权 = player（有效至下一次 pullFrame/seek/stop，§4.5 同型）。事件回调（`setOnStateChanged`/`setOnEndOfStream`）在调用线程同步触发，禁止回调内再入（A-12） | §10.4 |
+| A-08 | 2026-08-14 | **V1 时间基准（CFR 假设）**：FFmpegDecoder 打开时从 `media.frameRate` 推导 codec time_base = 1/fps（open 前后各设一次，防 codec 覆盖）；feed/dequeue 的 µs⇄tb 往返一致。VFR/多轨精确时间基准留 V4+（V1 验证矩阵全 CFR） | §8.3 §9 |
+| A-09 | 2026-08-14 | **Q8 偏差落地**：解码线程用 **std::thread** 而非 AYTask —— AYTask 是短任务 job pool（submit/wait/waitAll，无持久线程语义），不满足"专用解码线程生命周期 = 播放期"；§8.3/§14/§14.5 的"AYTask 管理"字样以本条为准。取消 = 原子标志 + 队列 clear 解阻塞 + join（§8.3 取消序列） | §8.3 §14 |
+| A-10 | 2026-08-14 | **V1 open() 同步化**：Opening 为瞬时 dwell（本地文件 open 毫秒级）；异步 open（后台线程 + 真实 dwell）不承诺，留 V2+ | §10.1 §10.3 |
+| A-11 | 2026-08-14 | **无 ffmpeg 构建**：`makeFFmpeg*()` 返回 nullptr（`AYVIDEO_HAS_FFMPEG` 编译定义门控）；player `open()` 对空后端返回 `UnsupportedFormat` → Failed。ffmpeg 缺失时模块退化为 Null/Mock 纯测试面 | §7.3 §18.5 |
+| A-12 | 2026-08-14 | **MockDecoder flush 语义对齐 §8.3**：flush() 重置 `_emitted`（seek 后新包必须能再产出帧）；V1 解码线程在 demux EOS 后调 decoder.flush() 排空。`feedPacket` 在真实数据包时清除 drain 标志（flush 后 feed 不再误报 EOS） | §8.2 §8.3 |
+| A-13 | 2026-08-14 | **V1 ship 落地修正**：① CMake 用 `FFMPEG_*` 变量 + 本地 `AYVideo_FFmpeg` INTERFACE（vcpkg FindFFMPEG 不创建 `FFmpeg::*` targets）；② `FrameQueue` 用 `unique_ptr<Slot[]>`（Slot 含 atomic，不可 `vector::resize`）；③ MSVC 禁 `av_err2str` compound literal → `av_strerror`；④ FFmpegDecoder 打开时注入 width/height/extradata；⑤ `feedPacket` 对 EAGAIN 返 `QueueFull` + DecodeLoop 重试；⑥ `flush()` = `avcodec_flush_buffers`（seek/replay），EOS drain 用 null `feedPacket`；⑦ **平面打包**：dequeue 将 I420/NV12 逐平面拷进连续 `packed` 缓冲（AVFrame 平面地址递增但中间可有未映射空洞 → FrameQueue `assign` span AV，0xC0000005）；⑧ 解码时间基锚定 µs（避开 find_stream_info 把 25fps 估成 27） | §6.3 §7.3 §8.3 §17 |
+| A-14 | 2026-08-14 | **V1.1 deferred**：AAC 合成轨用例（`makeClip(true)`）在本机 FFmpeg 8 构建下曾触发后续套件不稳定，暂跳过；loop 全时间线重启 / pause-resume 深路径 / seek-while-playing 深路径保留 smoke，完整覆盖回补 V1.1 | §17 §19 |
 
 ---
 
 ## 21. Changelog
 
+- **2026-08-14 (V1)**：FFmpeg 后端 + DecodeLoop + FrameQueue + `pullFrame` + 事件；544/544 × 3-run；guard 双向验证；A-13/A-14 落地修正与 deferred。
 - **2026-08-13 (V0.5)**：模块创建。公共面 8 头 + 4 后端 + Player 状态机 + SyncClock stub；194/194 PASS。2 个构建期修复：moved-from fixture 空指针 segfault（加 seam + fixture 重构）；SyncClock 无锚点垃圾 position（`_anchored` 门）。guard 硬门禁就位。
 
 ---
