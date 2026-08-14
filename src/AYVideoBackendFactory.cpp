@@ -12,6 +12,10 @@
 #include "../backend/FFmpegDemuxer.h"
 #endif
 
+#ifdef AYVIDEO_HAS_AYRENDERER
+#include "../backend/RendererVideoFrameTexture.h"
+#endif
+
 namespace ayt::video
 {
 
@@ -61,6 +65,17 @@ std::unique_ptr<IVideoFrameTexture> makeCpuVideoFrameTexture()
 std::unique_ptr<IVideoFrameTexture> makeMockVideoFrameTexture()
 {
     return std::make_unique<MockVideoFrameTexture>();
+}
+
+std::unique_ptr<IVideoFrameTexture> makeRendererVideoFrameTexture(
+    ayt::render::Renderer& renderer)
+{
+#ifdef AYVIDEO_HAS_AYRENDERER
+    return std::make_unique<RendererVideoFrameTexture>(renderer);
+#else
+    (void)renderer;
+    return nullptr;
+#endif
 }
 
 } // namespace ayt::video

@@ -38,6 +38,13 @@ set(BACKEND_FILES
     backend/MockVideoFrameTexture.cpp
 )
 
+# V3 GPU frame texture — PRIVATE AYRenderer (design.md §12). Gated on
+# the AYRenderer target existing (always present in the full tree;
+# keeps standalone AYVideo builds from requiring Renderer).
+if(TARGET AYRenderer)
+    list(APPEND BACKEND_FILES backend/RendererVideoFrameTexture.cpp)
+endif()
+
 # vcpkg FindFFMPEG exposes FFMPEG_* variables (LIBRARIES / INCLUDE_DIRS /
 # LIBRARY_DIRS) — it does NOT create FFmpeg::av* imported targets. Gate
 # on FFMPEG_FOUND + wrap the variables in a local INTERFACE target so
@@ -99,6 +106,20 @@ if(AYVIDEO_FFMPEG_LIBS)
     # src/AYVideoBackendFactory.cpp (they construct the PIMPL backends,
     # whose ctors live in the FFmpeg-compiled TUs).
     target_compile_definitions(${MODULE_NAME} PRIVATE AYVIDEO_HAS_FFMPEG=1)
+endif()
+
+# V3: GPU IVideoFrameTexture PRIVATE-links AYRenderer so public headers
+# stay clean (G-01). Consumers that call makeRendererVideoFrameTexture
+# must also link AYRenderer on the final executable (static-lib PRIVATE
+# does not propagate).
+if(TARGET AYRenderer)
+    target_link_libraries(${MODULE_NAME} PRIVATE AYRenderer)
+    target_compile_definitions(${MODULE_NAME} PRIVATE AYVIDEO_HAS_AYRENDERER=1)
+    set(AYVIDEO_HAS_AYRENDERER ON)
+    message(STATUS "AYVideo — Renderer GPU frame texture ENABLED (PRIVATE AYRenderer)")
+else()
+    set(AYVIDEO_HAS_AYRENDERER OFF)
+    message(STATUS "AYVideo — Renderer GPU frame texture DISABLED (AYRenderer target missing)")
 endif()
 
 # ffmpeg-leak guard is wired on the static library so every

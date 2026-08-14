@@ -39,6 +39,15 @@ add_executable(${TEST_TARGET}
     Test_FrameTexture.cpp        # V3 color convert + IVideoFrameTexture
 )
 
+# V3 GPU bridge — needs AYRenderer Noop backend (design.md §12).
+if(AYVIDEO_HAS_AYRENDERER)
+    target_sources(${TEST_TARGET} PRIVATE
+        Test_RendererFrameTexture.cpp
+    )
+    target_link_libraries(${TEST_TARGET} PRIVATE AYRenderer)
+    target_compile_definitions(${TEST_TARGET} PRIVATE AYVIDEO_HAS_AYRENDERER=1)
+endif()
+
 target_link_libraries(${TEST_TARGET} PRIVATE
     AYVideo
     AYTest

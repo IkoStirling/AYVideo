@@ -42,6 +42,11 @@ public:
     // after upload).
     virtual bool isDirty() const noexcept = 0;
     virtual void clearDirty() noexcept = 0;
+
+    // Opaque GPU texture id (ayt::render::TextureHandle::id). 0 for
+    // CPU/Mock staging textures or before the first successful GPU
+    // create. Keeps AYRenderer types out of this public header (G-01).
+    virtual uint64_t gpuTextureId() const noexcept { return 0; }
 };
 
 } // namespace ayt::video

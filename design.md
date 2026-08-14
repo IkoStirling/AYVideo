@@ -566,7 +566,8 @@ AYRuntime/AYVideo/
 - [x] 格式换算 I420/NV12/BGRA8→RGBA8（纯 C++ BT.601；`VideoColorConvert`）
 - [x] `VideoSubSystem` present 路径：`setFrameTexture` / `setFrameSink`
 - [x] AYRenderer `createDynamicTextureRgba8` / `updateTextureFromRgba8`（bgfx `updateTexture2D`；仿 FontAtlas）
-- [ ] AYVideo↔Renderer `IVideoFrameTexture` GPU 桥接实现 + 引擎 demo 上屏验收
+- [x] AYVideo↔Renderer `IVideoFrameTexture` GPU 桥接（`RendererVideoFrameTexture` PRIVATE AYRenderer；`makeRendererVideoFrameTexture`；Noop UT）
+- [ ] 引擎 demo 上屏验收（AY2D_EngineDemo 式截图对比）
 
 ### V4+（对齐 §3 表）
 
@@ -661,6 +662,7 @@ cmake --build D:\Projects\out\build\x64-Debug --target AYVideo_Tests
 
 ## 21. Changelog
 
+- **2026-08-14 (V3 GPU bridge)**：`RendererVideoFrameTexture` PRIVATE 链 AYRenderer；`makeRendererVideoFrameTexture` + `gpuTextureId()`；Noop UT。引擎 demo 上屏仍待。
 - **2026-08-14 (V3 Renderer)**：AYRenderer 落地 `createDynamicTextureRgba8` + `updateTextureFromRgba8`（动态 RGBA8 + `bgfx::updateTexture2D`）。GPU `IVideoFrameTexture` 桥 + demo 仍待。
 - **2026-08-14 (V3 start)**：`IVideoFrameTexture` / `IAYVideoFrameSink` + Cpu/Mock staging + BT.601 `VideoColorConvert`；`VideoSubSystem` 绑纹理/sink。AYRenderer 动态纹理 update API 仍缺，demo 上屏待后续。
 - **2026-08-14 (V2+)**：`VideoSubSystem`（ISubSystem priority 650，依赖 Audio）+ `player.position()` + `VideoComponent.playbackId`。

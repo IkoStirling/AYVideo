@@ -17,6 +17,11 @@
 
 #include <memory>
 
+namespace ayt::render
+{
+class Renderer;
+}
+
 namespace ayt::video
 {
 
@@ -32,9 +37,14 @@ std::unique_ptr<IAYVideoDecoder> makeMockDecoder(int32_t frameCount);
 std::unique_ptr<IAYVideoDemuxer> makeFFmpegDemuxer();
 std::unique_ptr<IAYVideoDecoder> makeFFmpegDecoder();
 
-// V3: CPU / mock frame textures (design.md §12). GPU upload bridge
-// lives in AYRenderer and is not constructed here.
+// V3: CPU / mock frame textures (design.md §12).
 std::unique_ptr<IVideoFrameTexture> makeCpuVideoFrameTexture();
 std::unique_ptr<IVideoFrameTexture> makeMockVideoFrameTexture();
+
+// V3: GPU bridge (PRIVATE AYRenderer). Returns nullptr when the module
+// was built without AYVIDEO_HAS_AYRENDERER. Forward-declared Renderer
+// keeps this header free of AYRenderer includes (G-01).
+std::unique_ptr<IVideoFrameTexture> makeRendererVideoFrameTexture(
+    ayt::render::Renderer& renderer);
 
 } // namespace ayt::video
