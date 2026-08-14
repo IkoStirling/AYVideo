@@ -14,6 +14,7 @@ extern "C" {
 
 #include <aytime/Duration.h>
 
+#include <atomic>
 #include <cstdio>
 #include <cstring>
 #include <string>
@@ -76,6 +77,8 @@ struct FFmpegDemuxer::Impl
     DemuxerOpenParams params;
     // Last video packet pts (µs) for V4 bidirectional seek direction.
     std::int64_t lastVideoPtsUs = -1;
+    // V5: interrupt_callback abort flag (stop/seek cancel).
+    std::atomic<int> interrupt{0};
 };
 
 FFmpegDemuxer::FFmpegDemuxer()
@@ -97,9 +100,51 @@ VideoResult FFmpegDemuxer::open(const DemuxerOpenParams& params)
         return VideoResult::InvalidState; // open() on an open demuxer
     }
 
-    AVFormatContext* ctx = nullptr;
+    AVFormatContext* ctx = avformat_alloc_context();
+    if (!ctx)
+    {
+        return VideoResult::OutOfMemory;
+    }
+
+    // V5: abort open/read when interrupt flag is set (stop/seek cancel).
+    ctx->interrupt_callback.callback = [](void* opaque) -> int {
+        auto* self = static_cast<Impl*>(opaque);
+        return self && self->interrupt.load(std::memory_order_relaxed) ? 1 : 0;
+    };
+    ctx->interrupt_callback.opaque = _impl.get();
+    _impl->interrupt.store(false, std::memory_order_relaxed);
+
+    AVDictionary* opts = nullptr;
+    if (isHttpUrl(params.path))
+    {
+        // Timeouts are microseconds for FFmpeg rw_timeout / timeout.
+        const int64_t openUs =
+            static_cast<int64_t>(params.openTimeoutMs > 0 ? params.openTimeoutMs
+                                                         : 10000)
+            * 1000;
+        const int64_t rwUs =
+            static_cast<int64_t>(params.rwTimeoutMs > 0 ? params.rwTimeoutMs
+                                                       : 15000)
+            * 1000;
+        av_dict_set_int(&opts, "timeout", openUs, 0);
+        av_dict_set_int(&opts, "rw_timeout", rwUs, 0);
+        av_dict_set(&opts, "reconnect", "1", 0);
+        av_dict_set(&opts, "reconnect_streamed", "1", 0);
+        av_dict_set(&opts, "reconnect_on_network_error", "1", 0);
+        if (params.reconnectDelayMs > 0)
+        {
+            av_dict_set_int(&opts, "reconnect_delay_max",
+                            static_cast<int64_t>(params.reconnectDelayMs), 0);
+        }
+        // Progressive: keep probe modest so TTFB stays reasonable.
+        av_dict_set_int(&opts, "probesize", 2 * 1024 * 1024, 0);
+        av_dict_set_int(&opts, "analyzeduration", 2 * 1000 * 1000, 0);
+    }
+
     // avformat_open_input takes ownership of ctx even on failure.
-    const int err = avformat_open_input(&ctx, params.path.c_str(), nullptr, nullptr);
+    const int err =
+        avformat_open_input(&ctx, params.path.c_str(), nullptr, &opts);
+    av_dict_free(&opts);
     if (err < 0)
     {
         _impl->errorString = avErrorString(err);
@@ -152,11 +197,13 @@ VideoResult FFmpegDemuxer::open(const DemuxerOpenParams& params)
     }
 
     _impl->open = true;
+    _impl->lastVideoPtsUs = -1;
     return VideoResult::Ok;
 }
 
 void FFmpegDemuxer::close() noexcept
 {
+    _impl->interrupt.store(1, std::memory_order_relaxed);
     if (_impl->packet)
     {
         av_packet_free(&_impl->packet);
@@ -169,6 +216,7 @@ void FFmpegDemuxer::close() noexcept
     _impl->audioStreamIndex = -1;
     _impl->lastVideoPtsUs = -1;
     _impl->open = false;
+    _impl->interrupt.store(0, std::memory_order_relaxed);
 }
 
 bool FFmpegDemuxer::isOpen() const noexcept
@@ -489,6 +537,22 @@ VideoResult FFmpegDemuxer::setActiveStreamIndices(int32_t videoStreamIndex,
         _impl->audioStreamIndex = -1;
     }
     return VideoResult::Ok;
+}
+
+VideoResult FFmpegDemuxer::reconnect()
+{
+    if (_impl->params.path.empty())
+    {
+        return VideoResult::NotInitialized;
+    }
+    const DemuxerOpenParams params = _impl->params;
+    close();
+    return open(params);
+}
+
+void FFmpegDemuxer::requestAbort() noexcept
+{
+    _impl->interrupt.store(1, std::memory_order_relaxed);
 }
 
 const char* FFmpegDemuxer::lastErrorString() const noexcept

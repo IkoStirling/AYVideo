@@ -135,6 +135,16 @@ public:
     void setOnStateChanged(std::function<void(PlayerState)> cb) noexcept;
     void setOnEndOfStream(std::function<void()> cb) noexcept;
 
+    // V5: buffering watermark event (stays Playing; no Buffering state).
+    // Fired synchronously on the calling thread of pullFrame/play.
+    void setOnBufferingChanged(std::function<void(bool)> cb) noexcept;
+    bool isBuffering() const noexcept;
+
+    // V5: FrameQueue watermarks for network progressive streams.
+    // Enter buffering when queued frames <= low; exit when >= high.
+    // Ignored for local files (reconnectMax == 0).
+    void setBufferWatermarks(uint32_t low, uint32_t high) noexcept;
+
     // V2: optional AYAudio engine for PCM bridge + AudioMaster sync
     // (design.md §11). nullptr clears the bridge (EngineClock fallback).
     // Must be called while Idle/Stopped (or before open); InvalidState
@@ -209,6 +219,9 @@ private:
 
     void notifyStateChanged(PlayerState state) noexcept;
     void notifyEndOfStream() noexcept;
+    void notifyBufferingChanged(bool buffering) noexcept;
+    void updateBufferingFromQueue() noexcept;  // V5 watermarks
+    void setBuffering(bool buffering) noexcept;
 
     void startLoop();                          // spawn decode thread
     void teardownPipeline() noexcept;          // stop+join+clear (stop/seek/
@@ -227,6 +240,7 @@ private:
 
     std::function<void(PlayerState)> _onStateChanged;
     std::function<void()> _onEndOfStream;
+    std::function<void(bool)> _onBufferingChanged;
 
     // Pipeline (declared after the backends so they are destroyed first:
     // the loop is joined before the backends go away — see dtor).
@@ -257,6 +271,13 @@ private:
     int32_t _activeAudioTrack = 0;   // index into MediaInfo::audioTracks (-1 off)
     FrameQueueOverflowPolicy _frameOverflowPolicy =
         FrameQueueOverflowPolicy::Block;
+
+    // V5 network progressive: last open params + buffering watermarks.
+    DemuxerOpenParams _demuxParams{};
+    bool _networkStreaming = false;
+    bool _buffering = false;
+    uint32_t _bufferLow = 0;   // enter buffering when size <= low
+    uint32_t _bufferHigh = 2;  // exit buffering when size >= high
 
     // AYAudio PCM bridge (not owned). Handles are Invalid* when inactive.
     ayt::audio::AudioEngine* _audioEngine = nullptr;

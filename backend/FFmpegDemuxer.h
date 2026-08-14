@@ -38,6 +38,8 @@ public:
     VideoResult seek(const ayt::time::Duration& target) override;
     VideoResult setActiveStreamIndices(int32_t videoStreamIndex,
                                        int32_t audioStreamIndex) override;
+    VideoResult reconnect() override;
+    void requestAbort() noexcept override;
 
     // Diagnostics (tests): last av* error string, or "".
     const char* lastErrorString() const noexcept;

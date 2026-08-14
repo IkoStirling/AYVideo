@@ -578,9 +578,14 @@ AYRuntime/AYVideo/
 - [x] 内存压力（slice-5）：FrameQueue `DropOldest` + `size`/`dropped`；`queueStats`；AudioQueue drop 计数
 - [x] 双向 seek 精修（slice-6）：forward prefer non-BACKWARD `av_seek_frame` + fallback；forward→backward UT
 
-### V5+（对齐 §3 表）
+### V5 网络流（对齐 §3 表；HTTP(S) progressive first）
 
-- [ ] 网络流 / 缓冲水位 / 断流重连
+- [x] HTTP(S) open：`isHttpUrl` + DemuxerOpenParams 超时/reconnect 选项；FFmpeg interrupt + HTTP dict
+- [x] 缓冲水位：`setOnBufferingChanged` / `setBufferWatermarks`（Playing 内事件，无 Buffering 状态）
+- [x] 断流重连：DecodeLoop `reconnectMax` + demuxer.reconnect()；耗尽 → Failed
+- [x] Mock inject UT：`Test_NetworkStream`（seekable=false / buffering / reconnect success+exhausted）
+- [ ] RTSP / HLS ABR — foresight until later slice
+- [ ] 真实 HTTP 集成验收（可选；CI 仍以 Mock 为准）
 
 ---
 
@@ -671,6 +676,7 @@ cmake --build D:\Projects\out\build\x64-Debug --target AYVideo_Tests
 
 ## 21. Changelog
 
+- **2026-08-14 (V5 network)**：HTTP(S) progressive open（非 seekable + reconnect）；FrameQueue 缓冲水位事件；DecodeLoop 断流重连；`Test_NetworkStream`。OUT：RTSP/HLS ABR、AYNetwork 依赖。
 - **2026-08-14 (V4 bidir seek slice-6)**：FFmpegDemuxer forward seek 优先非 BACKWARD，失败回退；`PlayerSeekForwardThenBackward`。
 - **2026-08-14 (V4 memory slice-5)**：FrameQueue optional `DropOldest` + `size`/`dropped`；AudioQueue drop 计数；`player.queueStats()`。
 - **2026-08-14 (V4 multi-track slice-4)**：`AYVideoTrack` + MediaInfo 音视频轨列表；player deferred `setActive*`；FFmpeg/Mock `setActiveStreamIndices`。

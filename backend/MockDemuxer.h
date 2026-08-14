@@ -47,6 +47,20 @@ public:
         _failReadDone = false;
     }
 
+    // V5: after emitting `index` packets, subsequent reads return
+    // DemuxError until reconnect() clears the disconnect latch.
+    void disconnectAfter(int32_t index) noexcept
+    {
+        _disconnectAfter = index;
+        _disconnected = false;
+    }
+    // Next N reconnect() calls fail (DemuxError); then succeed again.
+    void failNextReconnects(uint32_t count) noexcept
+    {
+        _failReconnectRemaining = count;
+    }
+    uint32_t reconnectCount() const noexcept { return _reconnectCount; }
+
     // Test observers (design.md §19): interaction counters.
     uint32_t openCount() const noexcept { return _openCount; }
     uint32_t readCount() const noexcept { return _readCount; }
@@ -61,6 +75,7 @@ public:
     VideoResult seek(const ayt::time::Duration& target) override;
     VideoResult setActiveStreamIndices(int32_t videoStreamIndex,
                                        int32_t audioStreamIndex) override;
+    VideoResult reconnect() override;
 
 private:
     int32_t _packetCount = 0;
@@ -74,10 +89,15 @@ private:
     int32_t _activeAudioStream = -1;
     int32_t _failReadAt = -1;
     bool _failReadDone = false;
+    int32_t _disconnectAfter = -1;
+    bool _disconnected = false;
+    uint32_t _failReconnectRemaining = 0;
+    DemuxerOpenParams _params{};
 
     uint32_t _openCount = 0;
     uint32_t _readCount = 0;
     uint32_t _seekCount = 0;
+    uint32_t _reconnectCount = 0;
 
     // Synthetic packet payload storage (stable address for the packet
     // data pointer contract).

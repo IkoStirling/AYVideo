@@ -41,6 +41,7 @@ add_executable(${TEST_TARGET}
     Test_SubtitleTracks.cpp      # V4 soft-subtitle track discovery
     Test_MediaTracks.cpp         # V4 A/V multi-track selection
     Test_MemoryPressure.cpp      # V4 FrameQueue DropOldest + size bounds
+    Test_NetworkStream.cpp       # V5 HTTP buffering + reconnect (Mock)
 )
 
 # V3 GPU bridge — needs AYRenderer Noop backend (design.md §12).

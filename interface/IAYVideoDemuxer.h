@@ -23,10 +23,24 @@ namespace ayt::video
 
 struct DemuxerOpenParams
 {
-    std::string path;          // container file path (V1: file only;
-                               // network URLs are a V5 foresight)
-    bool seekable = true;      // hint; demuxer may degrade if false
+    // Container file path OR network URL (V5: http:// / https://).
+    std::string path;
+    // Hint; demuxer may degrade if false. Player forces false for URLs.
+    bool seekable = true;
+
+    // V5 network options (ignored for local files). Timeouts in ms.
+    int32_t openTimeoutMs = 10000;
+    int32_t rwTimeoutMs = 15000;
+    uint32_t reconnectMax = 0;       // 0 = no DecodeLoop reconnect (local)
+    uint32_t reconnectDelayMs = 500; // backoff between reconnect attempts
 };
+
+// True when path looks like an HTTP(S) URL (V5 progressive streaming).
+inline bool isHttpUrl(const std::string& path) noexcept
+{
+    return path.compare(0, 7, "http://") == 0
+        || path.compare(0, 8, "https://") == 0;
+}
 
 class IAYVideoDemuxer
 {
@@ -63,6 +77,16 @@ public:
     {
         return VideoResult::Ok;
     }
+
+    // V5: close + reopen with the last successful open params (network
+    // reconnect). Default InvalidState for backends that do not support it.
+    virtual VideoResult reconnect()
+    {
+        return VideoResult::InvalidState;
+    }
+
+    // V5: cooperatively abort a blocking open/read (interrupt callback).
+    virtual void requestAbort() noexcept {}
 };
 
 } // namespace ayt::video

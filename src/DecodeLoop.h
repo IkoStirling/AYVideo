@@ -18,6 +18,7 @@
 #include <IAYVideoDemuxer.h>
 
 #include <atomic>
+#include <cstdint>
 #include <thread>
 
 namespace ayt::video
@@ -26,13 +27,23 @@ namespace ayt::video
 class FrameQueue;
 class AudioQueue;
 
+struct DecodeLoopOptions
+{
+    // V5: when > 0, DemuxError triggers demuxer.reconnect() + decoder
+    // flush up to this many times before failing the loop. 0 = V4
+    // soft-skip only (local files).
+    uint32_t reconnectMax = 0;
+    uint32_t reconnectDelayMs = 500;
+};
+
 class DecodeLoop
 {
 public:
     // `audioQueue` may be null (video-only). When non-null the decoder
     // must have been opened with decodeAudio=true.
     DecodeLoop(IAYVideoDemuxer& demuxer, IAYVideoDecoder& decoder,
-               FrameQueue& videoQueue, AudioQueue* audioQueue = nullptr);
+               FrameQueue& videoQueue, AudioQueue* audioQueue = nullptr,
+               DecodeLoopOptions options = {});
     ~DecodeLoop();
 
     DecodeLoop(const DecodeLoop&) = delete;
@@ -48,6 +59,11 @@ public:
     bool finished() const noexcept { return _finished.load(); }
     // V4 soft-skip: mid-stream DemuxError/DecodeError packets dropped.
     uint32_t skippedErrors() const noexcept { return _skippedErrors.load(); }
+    // V5: successful demuxer.reconnect() calls from this loop.
+    uint32_t reconnectAttempts() const noexcept
+    {
+        return _reconnectAttempts.load();
+    }
 
 private:
     void run() noexcept;
@@ -56,6 +72,7 @@ private:
     IAYVideoDecoder& _decoder;
     FrameQueue& _videoQueue;
     AudioQueue* _audioQueue = nullptr;
+    DecodeLoopOptions _options{};
 
     std::thread _thread;
     std::atomic<bool> _cancel{false};
@@ -64,6 +81,7 @@ private:
     std::atomic<bool> _endedClean{false};
     std::atomic<VideoResult> _failure{VideoResult::Ok};
     std::atomic<uint32_t> _skippedErrors{0};
+    std::atomic<uint32_t> _reconnectAttempts{0};
 };
 
 } // namespace ayt::video

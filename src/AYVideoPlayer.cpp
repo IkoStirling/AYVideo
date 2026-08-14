@@ -90,6 +90,7 @@ AYVideoPlayer::AYVideoPlayer(AYVideoPlayer&& other) noexcept
     _rate = other._rate;
     _onStateChanged = std::move(other._onStateChanged);
     _onEndOfStream = std::move(other._onEndOfStream);
+    _onBufferingChanged = std::move(other._onBufferingChanged);
     _demuxer = std::move(other._demuxer);
     _decoder = std::move(other._decoder);
     _info = other._info;
@@ -104,6 +105,12 @@ AYVideoPlayer::AYVideoPlayer(AYVideoPlayer&& other) noexcept
     _activeSubtitleTrack = other._activeSubtitleTrack;
     _activeVideoTrack = other._activeVideoTrack;
     _activeAudioTrack = other._activeAudioTrack;
+    _frameOverflowPolicy = other._frameOverflowPolicy;
+    _demuxParams = other._demuxParams;
+    _networkStreaming = other._networkStreaming;
+    _buffering = other._buffering;
+    _bufferLow = other._bufferLow;
+    _bufferHigh = other._bufferHigh;
     _audioEngine = other._audioEngine;
     _audioStreamId = other._audioStreamId;
     _audioVoice = other._audioVoice;
@@ -114,6 +121,8 @@ AYVideoPlayer::AYVideoPlayer(AYVideoPlayer&& other) noexcept
     other._activeSubtitleTrack = -1;
     other._activeVideoTrack = 0;
     other._activeAudioTrack = 0;
+    other._networkStreaming = false;
+    other._buffering = false;
     other._state = PlayerState::Stopped;
 }
 
@@ -134,6 +143,7 @@ AYVideoPlayer& AYVideoPlayer::operator=(AYVideoPlayer&& other) noexcept
     _rate = other._rate;
     _onStateChanged = std::move(other._onStateChanged);
     _onEndOfStream = std::move(other._onEndOfStream);
+    _onBufferingChanged = std::move(other._onBufferingChanged);
     _demuxer = std::move(other._demuxer);
     _decoder = std::move(other._decoder);
     _info = other._info;
@@ -148,6 +158,12 @@ AYVideoPlayer& AYVideoPlayer::operator=(AYVideoPlayer&& other) noexcept
     _activeSubtitleTrack = other._activeSubtitleTrack;
     _activeVideoTrack = other._activeVideoTrack;
     _activeAudioTrack = other._activeAudioTrack;
+    _frameOverflowPolicy = other._frameOverflowPolicy;
+    _demuxParams = other._demuxParams;
+    _networkStreaming = other._networkStreaming;
+    _buffering = other._buffering;
+    _bufferLow = other._bufferLow;
+    _bufferHigh = other._bufferHigh;
     _audioEngine = other._audioEngine;
     _audioStreamId = other._audioStreamId;
     _audioVoice = other._audioVoice;
@@ -158,6 +174,8 @@ AYVideoPlayer& AYVideoPlayer::operator=(AYVideoPlayer&& other) noexcept
     other._activeSubtitleTrack = -1;
     other._activeVideoTrack = 0;
     other._activeAudioTrack = 0;
+    other._networkStreaming = false;
+    other._buffering = false;
     other._state = PlayerState::Stopped;
     return *this;
 }
@@ -204,6 +222,75 @@ void AYVideoPlayer::setOnStateChanged(std::function<void(PlayerState)> cb) noexc
 void AYVideoPlayer::setOnEndOfStream(std::function<void()> cb) noexcept
 {
     _onEndOfStream = std::move(cb);
+}
+
+void AYVideoPlayer::setOnBufferingChanged(std::function<void(bool)> cb) noexcept
+{
+    _onBufferingChanged = std::move(cb);
+}
+
+bool AYVideoPlayer::isBuffering() const noexcept
+{
+    return _buffering;
+}
+
+void AYVideoPlayer::setBufferWatermarks(uint32_t low, uint32_t high) noexcept
+{
+    _bufferLow = low;
+    _bufferHigh = high < low ? low : high;
+}
+
+void AYVideoPlayer::notifyBufferingChanged(bool buffering) noexcept
+{
+    if (_onBufferingChanged)
+    {
+        try
+        {
+            _onBufferingChanged(buffering);
+        }
+        catch (...)
+        {
+        }
+    }
+}
+
+void AYVideoPlayer::setBuffering(bool buffering) noexcept
+{
+    if (_buffering == buffering)
+    {
+        return;
+    }
+    _buffering = buffering;
+    if (buffering)
+    {
+        _clock.markPaused();
+    }
+    else
+    {
+        _clock.markResumed();
+    }
+    notifyBufferingChanged(buffering);
+}
+
+void AYVideoPlayer::updateBufferingFromQueue() noexcept
+{
+    if (!_networkStreaming || !_queue)
+    {
+        return;
+    }
+    uint32_t size = _queue->size();
+    if (_held)
+    {
+        ++size;
+    }
+    if (!_buffering && size <= _bufferLow)
+    {
+        setBuffering(true);
+    }
+    else if (_buffering && size >= _bufferHigh)
+    {
+        setBuffering(false);
+    }
 }
 
 VideoResult AYVideoPlayer::attachAudioEngine(ayt::audio::AudioEngine* engine) noexcept
@@ -419,7 +506,10 @@ bool AYVideoPlayer::presentDueFrame(VideoFrame& out)
 void AYVideoPlayer::startLoop()
 {
     AudioQueue* aq = (_audioEngine && _info.hasAudio) ? _audioQueue.get() : nullptr;
-    _loop = std::make_unique<DecodeLoop>(*_demuxer, *_decoder, *_queue, aq);
+    DecodeLoopOptions opts;
+    opts.reconnectMax = _demuxParams.reconnectMax;
+    opts.reconnectDelayMs = _demuxParams.reconnectDelayMs;
+    _loop = std::make_unique<DecodeLoop>(*_demuxer, *_decoder, *_queue, aq, opts);
     _loop->start();
 }
 
@@ -470,12 +560,22 @@ VideoResult AYVideoPlayer::open(const std::string& path)
 
     DemuxerOpenParams params;
     params.path = path;
+    if (isHttpUrl(path))
+    {
+        // V5 HTTP(S) progressive: non-seekable + DecodeLoop reconnect.
+        params.seekable = false;
+        params.reconnectMax = 3;
+        params.reconnectDelayMs = 50; // keep Mock inject tests snappy
+    }
     if (auto r = _demuxer->open(params); r != VideoResult::Ok)
     {
         _lastResult = r;
         transition(PlayerState::Opening, PlayerState::Failed);
         return r;
     }
+    _demuxParams = params;
+    _networkStreaming = isHttpUrl(path) || params.reconnectMax > 0;
+    setBuffering(false);
     if (auto r = _demuxer->getMediaInfo(_info); r != VideoResult::Ok)
     {
         _lastResult = r;
@@ -537,7 +637,7 @@ VideoResult AYVideoPlayer::play()
         {
             _decoder->flush();
         }
-        if (_demuxer)
+        if (_demuxer && _demuxParams.seekable)
         {
             (void)_demuxer->seek(ayt::time::Duration{});
         }
@@ -546,6 +646,11 @@ VideoResult AYVideoPlayer::play()
         (void)applyActiveTracks();
         (void)ensureAudioBridge();
         startLoop();
+        if (_networkStreaming)
+        {
+            // Start in buffering until the high watermark fills.
+            setBuffering(true);
+        }
         if (_audioEngine)
         {
             _audioEngine->resume();
@@ -575,7 +680,7 @@ VideoResult AYVideoPlayer::play()
             {
                 _decoder->flush();
             }
-            if (_demuxer)
+            if (_demuxer && _demuxParams.seekable)
             {
                 (void)_demuxer->seek(pos);
             }
@@ -584,6 +689,10 @@ VideoResult AYVideoPlayer::play()
             (void)applyActiveTracks();
             (void)ensureAudioBridge();
             startLoop();
+            if (_networkStreaming)
+            {
+                setBuffering(true);
+            }
         }
         else
         {
@@ -651,6 +760,9 @@ VideoResult AYVideoPlayer::stop()
     _activeSubtitleTrack = -1;
     _activeVideoTrack = 0;
     _activeAudioTrack = 0;
+    _demuxParams = {};
+    _networkStreaming = false;
+    setBuffering(false);
     _clock.reset();
     transition(_state, PlayerState::Stopped);
     return VideoResult::Ok;
@@ -658,13 +770,19 @@ VideoResult AYVideoPlayer::stop()
 
 VideoResult AYVideoPlayer::seek(const ayt::time::Duration& target)
 {
-    const bool seekable =
+    const bool seekableState =
         _state == PlayerState::Ready || _state == PlayerState::Playing
         || _state == PlayerState::Paused;
-    if (!seekable)
+    if (!seekableState)
     {
         _lastResult = VideoResult::InvalidState;
         return VideoResult::InvalidState;
+    }
+    if (!_demuxParams.seekable)
+    {
+        // V5: HTTP progressive defaults to non-seekable.
+        _lastResult = VideoResult::UnsupportedFormat;
+        return VideoResult::UnsupportedFormat;
     }
 
     const PlayerState preSeek = _state;
@@ -961,8 +1079,19 @@ VideoResult AYVideoPlayer::pullFrame(VideoFrame& out)
         _audioEngine->submitFrame(0.0f);
     }
 
-    if (presentDueFrame(out))
+    // V5: refresh buffering before presentation decisions.
+    updateBufferingFromQueue();
+    if (_buffering)
     {
+        // Hold the clock; still allow EOS / failure detection below.
+        if (!_loop || !_loop->finished())
+        {
+            return VideoResult::Ok; // Ok + null while buffering
+        }
+    }
+    else if (presentDueFrame(out))
+    {
+        updateBufferingFromQueue();
         return VideoResult::Ok;
     }
     if (_held)
@@ -981,6 +1110,7 @@ VideoResult AYVideoPlayer::pullFrame(VideoFrame& out)
         _lastResult = failure;
         teardownPipeline();
         teardownAudioBridge();
+        setBuffering(false);
         transition(PlayerState::Playing, PlayerState::Failed);
         return failure;
     }
@@ -999,6 +1129,16 @@ VideoResult AYVideoPlayer::pullFrame(VideoFrame& out)
 
     if (_loopEnabled)
     {
+        if (!_demuxParams.seekable)
+        {
+            // Progressive streams cannot restart from 0 without seek.
+            teardownAudioBridge();
+            _lastResult = VideoResult::Ok;
+            setBuffering(false);
+            transition(PlayerState::Playing, PlayerState::Ready);
+            notifyEndOfStream();
+            return VideoResult::EndOfStream;
+        }
         if (_queue)
         {
             _queue->clear();
@@ -1019,11 +1159,16 @@ VideoResult AYVideoPlayer::pullFrame(VideoFrame& out)
         _clock.reset(ayt::time::Duration{});
         (void)ensureAudioBridge();
         startLoop();
+        if (_networkStreaming)
+        {
+            setBuffering(true);
+        }
         return VideoResult::Ok;
     }
 
     teardownAudioBridge();
     _lastResult = VideoResult::Ok;
+    setBuffering(false);
     transition(PlayerState::Playing, PlayerState::Ready);
     notifyEndOfStream();
     return VideoResult::EndOfStream;

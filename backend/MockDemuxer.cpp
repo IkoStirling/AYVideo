@@ -27,7 +27,7 @@ MockDemuxer::MockDemuxer(int32_t packetCount)
     fillPayload(_payload, 0);
 }
 
-VideoResult MockDemuxer::open(const DemuxerOpenParams& /*params*/)
+VideoResult MockDemuxer::open(const DemuxerOpenParams& params)
 {
     ++_openCount;
     if (_failOpen)
@@ -35,9 +35,11 @@ VideoResult MockDemuxer::open(const DemuxerOpenParams& /*params*/)
         _open = false;
         return VideoResult::DemuxError;
     }
+    _params = params;
     _open = true;
     _emitted = 0;
     _closed = false;
+    _disconnected = false;
     _activeVideoStream = 0;
     _activeAudioStream = _provideMultiAudio ? 1 : -1;
     return VideoResult::Ok;
@@ -151,6 +153,17 @@ VideoResult MockDemuxer::readNextPacket(VideoPacket& outPacket)
     {
         return VideoResult::NotInitialized;
     }
+    if (_disconnected)
+    {
+        ++_readCount;
+        return VideoResult::DemuxError;
+    }
+    if (_disconnectAfter >= 0 && _emitted >= _disconnectAfter)
+    {
+        _disconnected = true;
+        ++_readCount;
+        return VideoResult::DemuxError;
+    }
     if (_emitted >= _packetCount)
     {
         return VideoResult::EndOfStream;
@@ -183,8 +196,34 @@ VideoResult MockDemuxer::seek(const ayt::time::Duration& /*target*/)
     {
         return VideoResult::NotInitialized;
     }
+    if (!_params.seekable)
+    {
+        return VideoResult::UnsupportedFormat;
+    }
     ++_seekCount;
     _emitted = 0; // next read restarts from the beginning (skeleton contract)
+    return VideoResult::Ok;
+}
+
+VideoResult MockDemuxer::reconnect()
+{
+    if (_params.path.empty() && !_open && _openCount == 0)
+    {
+        return VideoResult::NotInitialized;
+    }
+    ++_reconnectCount;
+    if (_failReconnectRemaining > 0)
+    {
+        --_failReconnectRemaining;
+        return VideoResult::DemuxError;
+    }
+    _disconnected = false;
+    // One-shot latch: clear so the same disconnectAfter does not
+    // immediately re-trip after a successful reconnect.
+    _disconnectAfter = -1;
+    // Keep packet cursor so playback resumes after the disconnect point.
+    _open = true;
+    _closed = false;
     return VideoResult::Ok;
 }
 

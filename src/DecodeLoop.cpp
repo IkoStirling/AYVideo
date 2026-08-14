@@ -3,17 +3,21 @@
 #include "AudioQueue.h"
 #include "FrameQueue.h"
 
+#include <chrono>
 #include <cstdint>
+#include <thread>
 
 namespace ayt::video
 {
 
 DecodeLoop::DecodeLoop(IAYVideoDemuxer& demuxer, IAYVideoDecoder& decoder,
-                       FrameQueue& videoQueue, AudioQueue* audioQueue)
+                       FrameQueue& videoQueue, AudioQueue* audioQueue,
+                       DecodeLoopOptions options)
     : _demuxer(demuxer)
     , _decoder(decoder)
     , _videoQueue(videoQueue)
     , _audioQueue(audioQueue)
+    , _options(options)
 {
 }
 
@@ -30,12 +34,14 @@ void DecodeLoop::start()
     _endedClean.store(false);
     _failure.store(VideoResult::Ok);
     _skippedErrors.store(0);
+    _reconnectAttempts.store(0);
     _thread = std::thread(&DecodeLoop::run, this);
 }
 
 void DecodeLoop::requestStop() noexcept
 {
     _cancel.store(true);
+    _demuxer.requestAbort();
 }
 
 void DecodeLoop::join() noexcept
@@ -53,6 +59,7 @@ void DecodeLoop::run() noexcept
     VideoPacket pkt;
     VideoFrame frame;
     AudioPcmFrame audio;
+    uint32_t reconnectUsed = 0;
 
     // Drain decode output into the queues until Ok+null / EOS / error /
     // cancel. Returns false when the outer loop must stop.
@@ -173,6 +180,7 @@ void DecodeLoop::run() noexcept
         const VideoResult r = _demuxer.readNextPacket(pkt);
         if (r == VideoResult::Ok)
         {
+            reconnectUsed = 0; // healthy read resets the streak
             if (!feedOne(pkt))
             {
                 break;
@@ -209,6 +217,39 @@ void DecodeLoop::run() noexcept
 
         if (r == VideoResult::DemuxError)
         {
+            if (_options.reconnectMax > 0)
+            {
+                if (reconnectUsed >= _options.reconnectMax)
+                {
+                    _failure.store(VideoResult::DemuxError);
+                    break;
+                }
+                const uint32_t delayMs =
+                    _options.reconnectDelayMs > 0 ? _options.reconnectDelayMs
+                                                  : 1u;
+                // Short sleep so tests stay fast; cancel can abort early.
+                for (uint32_t slept = 0; slept < delayMs; slept += 5)
+                {
+                    if (_cancel.load())
+                    {
+                        break;
+                    }
+                    std::this_thread::sleep_for(std::chrono::milliseconds(5));
+                }
+                if (_cancel.load())
+                {
+                    break;
+                }
+                ++reconnectUsed;
+                _reconnectAttempts.fetch_add(1);
+                if (_demuxer.reconnect() == VideoResult::Ok)
+                {
+                    (void)_decoder.flush();
+                    continue;
+                }
+                // Failed reopen — count against max and retry / fail.
+                continue;
+            }
             // V4 soft-skip: mid-stream demux glitch — continue reading.
             _skippedErrors.fetch_add(1);
             continue;
