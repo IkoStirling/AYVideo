@@ -1,5 +1,5 @@
 #pragma once
-// AYVideoSubtitle.h — soft-subtitle track metadata + text cues.
+// AYVideo/VideoSubtitle.h — soft-subtitle track metadata + text cues.
 //
 // Track discovery ships in V4. Soft text cues (start/end/text) are the
 // minimal present path for Mock / sidecar; ASS/libass burn-in and bitmap

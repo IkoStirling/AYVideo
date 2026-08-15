@@ -1,5 +1,5 @@
 #pragma once
-// AYVideoFrame.h — data-carrier PODs for the decode pipeline.
+// AYVideo/VideoFrame.h — data-carrier PODs for the decode pipeline.
 //
 // design.md §6.2: VideoPacket is the demux output (owned by the demuxer,
 // valid until the next readNextPacket call); VideoFrame is the decoder
@@ -7,7 +7,7 @@
 // dequeueFrame / flush call). Both are reference-semantics carriers —
 // never copy the payload.
 
-#include <AYVideoTypes.h>
+#include <AYVideo/VideoTypes.h>
 #include <AYTime/Duration.h>
 
 #include <cstdint>

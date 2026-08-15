@@ -1,7 +1,7 @@
 #pragma once
 // MockVideoFrameTexture.h — records updateFromFrame for tests (§12 / §19).
 
-#include <IVideoFrameTexture.h>
+#include <AYVideo/IVideoFrameTexture.h>
 
 #include <cstdint>
 #include <vector>

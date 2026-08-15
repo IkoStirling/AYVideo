@@ -1,8 +1,8 @@
-#include <AYVideoSubSystem.h>
+#include <AYVideo/VideoSubSystem.h>
 
-#include <IAYVideoBackendFactory.h>
+#include <AYVideo/IVideoBackendFactory.h>
 
-#include <AYAudioSubSystem.h>
+#include <AYAudio/AudioSubSystem.h>
 
 namespace ayt::video
 {

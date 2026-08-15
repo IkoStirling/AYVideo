@@ -3,10 +3,10 @@
 #include <memory>
 
 #include "AYTest.h"
-#include "AYVideoMediaInfo.h"
-#include "AYVideoPlayer.h"
-#include "AYVideoTrack.h"
-#include "AYVideoTypes.h"
+#include "AYVideo/VideoMediaInfo.h"
+#include "AYVideo/VideoPlayer.h"
+#include "AYVideo/VideoTrack.h"
+#include "AYVideo/VideoTypes.h"
 #include "../backend/MockDecoder.h"
 #include "../backend/MockDemuxer.h"
 

@@ -6,8 +6,8 @@
 // accepts any VideoPixelFormat the converter supports and stores an
 // RGBA8 staging buffer for the upload bridge.
 
-#include <AYVideoFrame.h>
-#include <AYVideoTypes.h>
+#include <AYVideo/VideoFrame.h>
+#include <AYVideo/VideoTypes.h>
 
 #include <cstdint>
 

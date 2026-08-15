@@ -9,11 +9,11 @@
 //
 // The header is ffmpeg-free (PIMPL) — G-01 discipline.
 
-#include <AYVideoAudioFrame.h>
-#include <AYVideoFrame.h>
-#include <AYVideoMediaInfo.h>
-#include <AYVideoTypes.h>
-#include <IAYVideoDecoder.h>
+#include <AYVideo/VideoAudioFrame.h>
+#include <AYVideo/VideoFrame.h>
+#include <AYVideo/VideoMediaInfo.h>
+#include <AYVideo/VideoTypes.h>
+#include <AYVideo/IVideoDecoder.h>
 
 #include <memory>
 #include <string>

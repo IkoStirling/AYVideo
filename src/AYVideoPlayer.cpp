@@ -1,4 +1,4 @@
-﻿#include <AYVideoPlayer.h>
+#include <AYVideo/VideoPlayer.h>
 
 #include "AudioQueue.h"
 #include "DecodeLoop.h"
@@ -6,8 +6,8 @@
 #include "SeekLog.h"
 #include "SubtitleCueQueue.h"
 
-#include <AYAudioEngine.h>
-#include <AYAudioTypes.h>
+#include <AYAudio/AudioEngine.h>
+#include <AYAudio/AudioTypes.h>
 
 #include <chrono>
 #include <cstdint>

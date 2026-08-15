@@ -5,7 +5,7 @@
 // the script, interaction counters for player↔backend contract tests.
 
 #include "AYTest.h"
-#include "AYVideoTypes.h"
+#include "AYVideo/VideoTypes.h"
 #include "../backend/MockDecoder.h"
 #include "../backend/MockDemuxer.h"
 

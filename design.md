@@ -176,7 +176,7 @@
 
 ### 5.2 文件命名
 
-- 公共头 `include/AYVideo*.h`（AY 前缀平铺，如 `AYVideoTypes.h`）；接口 `interface/IAYVideo*.h`；实现 `src/AYVideo*.cpp`；后端 `backend/XxxDemuxer.h/.cpp`；测试 `unittest/Test_*.cpp`。
+- 公共头 `include/AYVideo*.h`（AY 前缀平铺，如 `AYVideo/VideoTypes.h`）；接口 `interface/IAYVideo*.h`；实现 `src/AYVideo*.cpp`；后端 `backend/XxxDemuxer.h/.cpp`；测试 `unittest/Test_*.cpp`。
 
 ### 5.3 类命名
 
@@ -466,15 +466,15 @@ AYRuntime/AYVideo/
 ├── cmake/
 │   └── CheckNoFFmpegInPublicHeaders.cmake   # G-01 硬门禁（14 pattern）
 ├── include/                   # 公共头（AY 前缀平铺，guard 扫描目录）
-│   ├── AYVideoTypes.h         # VideoResult / VideoPixelFormat / toString
-│   ├── AYVideoMediaInfo.h     # MediaInfo
-│   ├── AYVideoFrame.h         # VideoPacket / VideoFrame
-│   ├── AYVideoPlayer.h        # PlayerState / AYVideoPlayer
-│   └── AYVideoSyncClock.h     # NowFn / SyncSource / AYVideoSyncClock
+│   ├── AYVideo/VideoTypes.h         # VideoResult / VideoPixelFormat / toString
+│   ├── AYVideo/VideoMediaInfo.h     # MediaInfo
+│   ├── AYVideo/VideoFrame.h         # VideoPacket / VideoFrame
+│   ├── AYVideo/VideoPlayer.h        # PlayerState / AYVideoPlayer
+│   └── AYVideo/VideoSyncClock.h     # NowFn / SyncSource / AYVideoSyncClock
 ├── interface/                 # 后端抽象（guard 扫描目录）
-│   ├── IAYVideoDemuxer.h
-│   ├── IAYVideoDecoder.h
-│   └── IAYVideoBackendFactory.h   # makeNull*/makeMock*（V1 加 makeFFmpeg*）
+│   ├── AYVideo/IVideoDemuxer.h
+│   ├── AYVideo/IVideoDecoder.h
+│   └── AYVideo/IVideoBackendFactory.h   # makeNull*/makeMock*（V1 加 makeFFmpeg*）
 ├── src/
 │   ├── AYVideoTypes.cpp       # toString 实现
 │   ├── AYVideoPlayer.cpp      # 状态机 + 控制面 + V1 播放管线
@@ -662,7 +662,7 @@ cmake --build D:\Projects\out\build\x64-Debug --target AYVideo_Tests
 ### 19.3 Guard 双向验证（G-01）
 
 1. `ninja ayvideo_check_no_ffmpeg_in_public_headers` 当前绿。
-2. 临时在 `include/AYVideoTypes.h` 插入 `#include <libavcodec/avcodec.h>` → target FAIL（14 pattern 命中）。
+2. 临时在 `include/AYVideo/VideoTypes.h` 插入 `#include <libavcodec/avcodec.h>` → target FAIL（14 pattern 命中）。
 3. 撤回 → 恢复绿。
 
 ---

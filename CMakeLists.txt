@@ -76,9 +76,10 @@ endif()
 add_library(${MODULE_NAME} STATIC ${SRC_FILES} ${BACKEND_FILES})
 
 target_include_directories(${MODULE_NAME} PUBLIC
+    ${CMAKE_CURRENT_SOURCE_DIR}
     # Public headers live flat under `include/`; backend seams live
     # under `interface/` (IAY prefix). Consumers write
-    # `#include "AYVideoTypes.h"` or the umbrella `#include <AYVideo.h>`
+    # `#include "AYVideo/VideoTypes.h"` or the umbrella `#include <AYVideo.h>`
     # which itself includes from include/ + interface/. Flat layout
     # mirrors AYAudio / AYVoxel (Phase 1+) conventions.
     #

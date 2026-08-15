@@ -8,9 +8,9 @@
 #include <vector>
 
 #include "AYTest.h"
-#include "AYVideoTypes.h"
-#include "AYVideoMediaInfo.h"
-#include "AYVideoFrame.h"
+#include "AYVideo/VideoTypes.h"
+#include "AYVideo/VideoMediaInfo.h"
+#include "AYVideo/VideoFrame.h"
 #include "FFmpegTestMedia.h"
 #include "../backend/FFmpegDemuxer.h"
 #include "../backend/FFmpegDecoder.h"

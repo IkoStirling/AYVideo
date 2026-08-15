@@ -1,11 +1,11 @@
 #pragma once
-// AYVideoSyncClock.h — A/V synchronization clock.
+// AYVideo/VideoSyncClock.h — A/V synchronization clock.
 //
 // design.md §9: master/slave presentation clock. V0.5 shipped the
 // engine-clock path; V2 enables AudioMaster when a position provider is
 // installed (AYAudio voicePositionFrames via the PCM bridge, §11).
 
-#include <AYVideoTypes.h>
+#include <AYVideo/VideoTypes.h>
 #include <AYTime/Duration.h>
 #include <AYTime/TimePoint.h>
 

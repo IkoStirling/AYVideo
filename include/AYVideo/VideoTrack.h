@@ -1,5 +1,5 @@
 #pragma once
-// AYVideoTrack.h — A/V track metadata (V4 N-10 multi-track selection).
+// AYVideo/VideoTrack.h — A/V track metadata (V4 N-10 multi-track selection).
 //
 // Discovery + deferred selection (applied on next play/seek). Seamless
 // mid-play hot-swap without flush is OUT of this slice.

@@ -7,8 +7,8 @@
 #include <cstdint>
 
 #include "AYTest.h"
-#include "AYVideoFrame.h"
-#include "AYVideoTypes.h"
+#include "AYVideo/VideoFrame.h"
+#include "AYVideo/VideoTypes.h"
 
 using namespace ayt::video;
 

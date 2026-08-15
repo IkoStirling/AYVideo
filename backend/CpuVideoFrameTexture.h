@@ -4,7 +4,7 @@
 // Owns a CPU RGBA8 buffer updated via convertFrameToRgba8. The AYRenderer
 // upload bridge (follow-up) reads rgba8Data() when isDirty().
 
-#include <IVideoFrameTexture.h>
+#include <AYVideo/IVideoFrameTexture.h>
 
 #include <cstdint>
 #include <vector>

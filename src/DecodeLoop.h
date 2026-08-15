@@ -17,9 +17,9 @@
 // PlaybackIntent (player sole writer): ScrubPreview / CatchUpToFloor /
 // Playing — decode only reads it so scrub ceiling cannot race play().
 
-#include <AYVideoTypes.h>
-#include <IAYVideoDecoder.h>
-#include <IAYVideoDemuxer.h>
+#include <AYVideo/VideoTypes.h>
+#include <AYVideo/IVideoDecoder.h>
+#include <AYVideo/IVideoDemuxer.h>
 #include <AYTime/Duration.h>
 
 #include <atomic>

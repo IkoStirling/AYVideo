@@ -13,10 +13,10 @@
 #include <string>
 
 #include "AYTest.h"
-#include "AYVideoTypes.h"
-#include "AYVideoMediaInfo.h"
-#include "AYVideoFrame.h"
-#include "AYVideoPlayer.h"
+#include "AYVideo/VideoTypes.h"
+#include "AYVideo/VideoMediaInfo.h"
+#include "AYVideo/VideoFrame.h"
+#include "AYVideo/VideoPlayer.h"
 #include "FFmpegTestMedia.h"
 #include "../backend/FFmpegDemuxer.h"
 

@@ -6,7 +6,7 @@
 // readNextPacket returns EndOfStream immediately. Mirrors the AYAudio
 // NullBackend convention ("valid, if silent, pointer").
 
-#include <IAYVideoDemuxer.h>
+#include <AYVideo/IVideoDemuxer.h>
 
 namespace ayt::video
 {

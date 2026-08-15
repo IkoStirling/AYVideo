@@ -6,10 +6,10 @@
 
 #include "AYRenderer.h"
 #include "AYTest.h"
-#include "AYVideoFrame.h"
-#include "AYVideoTypes.h"
-#include "IAYVideoBackendFactory.h"
-#include "IVideoFrameTexture.h"
+#include "AYVideo/VideoFrame.h"
+#include "AYVideo/VideoTypes.h"
+#include "AYVideo/IVideoBackendFactory.h"
+#include "AYVideo/IVideoFrameTexture.h"
 #include "backend/RendererVideoFrameTexture.h"
 
 using namespace ayt::video;

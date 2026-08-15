@@ -1,4 +1,4 @@
-#include <AYVideoSyncClock.h>
+#include <AYVideo/VideoSyncClock.h>
 
 namespace ayt::video
 {

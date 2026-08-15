@@ -8,8 +8,8 @@
 #include <cstdint>
 
 #include "AYTest.h"
-#include "AYVideoSyncClock.h"
-#include "AYVideoTypes.h"
+#include "AYVideo/VideoSyncClock.h"
+#include "AYVideo/VideoTypes.h"
 #include <AYTime/TimePoint.h>
 
 using namespace ayt::video;

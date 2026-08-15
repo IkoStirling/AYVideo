@@ -6,7 +6,7 @@
 // (capacity is slot count, not sample count). Overflow drops the oldest
 // queued chunk (audio latency is more harmful than a brief gap).
 
-#include <AYVideoAudioFrame.h>
+#include <AYVideo/VideoAudioFrame.h>
 
 #include <atomic>
 #include <cstdint>

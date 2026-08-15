@@ -6,7 +6,7 @@
 // stay AYRenderer-free; demos/tests that need TextureHandle include
 // this backend header.
 
-#include <IVideoFrameTexture.h>
+#include <AYVideo/IVideoFrameTexture.h>
 
 #include <AYRenderer.h>
 

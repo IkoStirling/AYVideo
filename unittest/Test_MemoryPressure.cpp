@@ -5,8 +5,8 @@
 #include <vector>
 
 #include "AYTest.h"
-#include "AYVideoFrame.h"
-#include "AYVideoTypes.h"
+#include "AYVideo/VideoFrame.h"
+#include "AYVideo/VideoTypes.h"
 #include "src/FrameQueue.h"
 
 using namespace ayt::video;

@@ -6,9 +6,9 @@
 #include <vector>
 
 #include "AYTest.h"
-#include "AYVideoPlayer.h"
-#include "AYVideoTypes.h"
-#include "IAYVideoDemuxer.h"
+#include "AYVideo/VideoPlayer.h"
+#include "AYVideo/VideoTypes.h"
+#include "AYVideo/IVideoDemuxer.h"
 #include "../backend/MockDecoder.h"
 #include "../backend/MockDemuxer.h"
 

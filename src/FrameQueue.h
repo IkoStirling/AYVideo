@@ -21,8 +21,8 @@
 // single-producer/single-consumer requirement is a contract, not a
 // runtime check (design.md §4.4).
 
-#include <AYVideoFrame.h>
-#include <AYVideoTypes.h>
+#include <AYVideo/VideoFrame.h>
+#include <AYVideo/VideoTypes.h>
 
 #include <atomic>
 #include <cstdint>

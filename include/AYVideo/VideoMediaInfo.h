@@ -1,5 +1,5 @@
 #pragma once
-// AYVideoMediaInfo.h — container-level metadata snapshot.
+// AYVideo/VideoMediaInfo.h — container-level metadata snapshot.
 //
 // design.md §6.1: produced by IAYVideoDemuxer::getMediaInfo() after a
 // successful open(). Plain value type — safe to copy across threads
@@ -9,8 +9,8 @@
 #include <string>
 #include <vector>
 
-#include <AYVideoSubtitle.h>
-#include <AYVideoTrack.h>
+#include <AYVideo/VideoSubtitle.h>
+#include <AYVideo/VideoTrack.h>
 
 namespace ayt::video
 {

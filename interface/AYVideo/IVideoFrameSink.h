@@ -1,12 +1,12 @@
 #pragma once
-// IAYVideoFrameSink.h — optional present callback (design.md §12).
+// AYVideo/IVideoFrameSink.h — optional present callback (design.md §12).
 //
 // Fired on the player/subsystem thread after a frame is converted into
 // an IVideoFrameTexture. Implementations must not re-enter the player
 // control surface (same A-12 rule as state events).
 
-#include <AYVideoTypes.h>
-#include <IVideoFrameTexture.h>
+#include <AYVideo/VideoTypes.h>
+#include <AYVideo/IVideoFrameTexture.h>
 
 #include <cstdint>
 

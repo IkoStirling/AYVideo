@@ -1,5 +1,5 @@
 #pragma once
-// AYVideoPlayer.h — playback control facade.
+// AYVideo/VideoPlayer.h — playback control facade.
 //
 // design.md §10: state machine + control surface. V0.5 shipped the state
 // machine skeleton with pluggable Null/Mock backends; V1 wires the real
@@ -13,15 +13,15 @@
 // frame queue. Events fire synchronously on the calling thread and must
 // not re-enter the control surface (design.md §10.4, A-12).
 
-#include <AYVideoAudioFrame.h>
-#include <AYVideoMediaInfo.h>
-#include <AYVideoSubtitle.h>
-#include <AYVideoSyncClock.h>
-#include <AYVideoTrack.h>
-#include <AYVideoTypes.h>
-#include <IAYVideoBackendFactory.h>
-#include <IAYVideoDecoder.h>
-#include <IAYVideoDemuxer.h>
+#include <AYVideo/VideoAudioFrame.h>
+#include <AYVideo/VideoMediaInfo.h>
+#include <AYVideo/VideoSubtitle.h>
+#include <AYVideo/VideoSyncClock.h>
+#include <AYVideo/VideoTrack.h>
+#include <AYVideo/VideoTypes.h>
+#include <AYVideo/IVideoBackendFactory.h>
+#include <AYVideo/IVideoDecoder.h>
+#include <AYVideo/IVideoDemuxer.h>
 #include <AYTime/Duration.h>
 
 #include <chrono>

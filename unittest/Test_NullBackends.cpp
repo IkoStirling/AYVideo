@@ -6,7 +6,7 @@
 // "no frame ready yet" contract state; flush gates EndOfStream.
 
 #include "AYTest.h"
-#include "AYVideoTypes.h"
+#include "AYVideo/VideoTypes.h"
 #include "../backend/NullDecoder.h"
 #include "../backend/NullDemuxer.h"
 

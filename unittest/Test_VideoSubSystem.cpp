@@ -7,10 +7,10 @@
 #include <utility>
 
 #include "AYTest.h"
-#include "AYVideoSubSystem.h"
-#include "AYVideoTypes.h"
-#include "IAYVideoBackendFactory.h"
-#include "IAYVideoFrameSink.h"
+#include "AYVideo/VideoSubSystem.h"
+#include "AYVideo/VideoTypes.h"
+#include "AYVideo/IVideoBackendFactory.h"
+#include "AYVideo/IVideoFrameSink.h"
 #include "VideoComponent.h"
 #include "backend/MockDecoder.h"
 #include "backend/MockDemuxer.h"

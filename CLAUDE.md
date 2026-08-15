@@ -38,7 +38,7 @@
 - 子模块 / 目录：`AYRuntime/AYVideo`。
 - 命名空间：`ayt::video`（与 `ayt::physics` / `ayt::entity` / `ayt::ay2d` 同级）。
 - 公共类名**不带** `AY` 前缀（`MediaInfo` / `VideoFrame` / `AYVideoPlayer` / `NullDemuxer`）——门面类 `AYVideoPlayer` / `AYVideoSyncClock` 例外带前缀（对齐公共头文件前缀惯例）。
-- 公共头文件名带 `AY` 前缀（`AYVideoTypes.h` / `AYVideoPlayer.h`）；接口文件名用 `I` 前缀（`IAYVideoDemuxer.h`）。
+- 公共头文件名带 `AY` 前缀（`AYVideo/VideoTypes.h` / `AYVideo/VideoPlayer.h`）；接口文件名用 `I` 前缀（`AYVideo/IVideoDemuxer.h`）。
 - 私有成员 `_` 前缀 camelCase（`_state` / `_demuxer`）；公共成员 plain camelCase。
 - 测试：`unittest/Test_<Subject>.cpp` 一文件一 TU；用 AYTest 的 `TEST_SUITE` / `TEST_CASE` / `CHECK_*`。
 

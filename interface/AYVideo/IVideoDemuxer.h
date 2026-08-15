@@ -1,5 +1,5 @@
 #pragma once
-// IAYVideoDemuxer.h — container demux seam.
+// AYVideo/IVideoDemuxer.h — container demux seam.
 //
 // design.md §7: separates container parsing (MP4/MKV/WebM/...) from the
 // codec pipeline. A demuxer owns its packet buffer — packet pointers
@@ -11,9 +11,9 @@
 // concurrently, but a single instance must never be driven from two
 // threads.
 
-#include <AYVideoFrame.h>
-#include <AYVideoMediaInfo.h>
-#include <AYVideoTypes.h>
+#include <AYVideo/VideoFrame.h>
+#include <AYVideo/VideoMediaInfo.h>
+#include <AYVideo/VideoTypes.h>
 #include <AYTime/Duration.h>
 
 #include <string>

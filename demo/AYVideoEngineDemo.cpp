@@ -21,22 +21,22 @@
 #include <windowsx.h>
 
 #include "AYGameLoop.h"
-#include "AYRendererSubSystem.h"
-#include "AYTilemapShaderSources.h"
+#include "AYRenderer/RendererSubSystem.h"
+#include "AYRenderer/TilemapShaderSources.h"
 
-#include "AYVideoFrame.h"
-#include "AYVideoMediaInfo.h"
-#include "AYVideoPlayer.h"
-#include "AYVideoSubtitle.h"
-#include "AYVideoSyncClock.h"
-#include "AYVideoTypes.h"
-#include "IAYVideoBackendFactory.h"
-#include "IAYVideoDemuxer.h"
-#include "IVideoFrameTexture.h"
+#include "AYVideo/VideoFrame.h"
+#include "AYVideo/VideoMediaInfo.h"
+#include "AYVideo/VideoPlayer.h"
+#include "AYVideo/VideoSubtitle.h"
+#include "AYVideo/VideoSyncClock.h"
+#include "AYVideo/VideoTypes.h"
+#include "AYVideo/IVideoBackendFactory.h"
+#include "AYVideo/IVideoDemuxer.h"
+#include "AYVideo/IVideoFrameTexture.h"
 #include "backend/RendererVideoFrameTexture.h"
 
-#include <AYAudioEngine.h>
-#include <AYAudioTypes.h>
+#include <AYAudio/AudioEngine.h>
+#include <AYAudio/AudioTypes.h>
 
 #include <AYMath/MathTransform.h>
 #include <AYMath/MathTypes.h>

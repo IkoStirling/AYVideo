@@ -5,8 +5,8 @@
 #include <thread>
 
 #include "AYTest.h"
-#include "AYVideoPlayer.h"
-#include "AYVideoTypes.h"
+#include "AYVideo/VideoPlayer.h"
+#include "AYVideo/VideoTypes.h"
 #include "../backend/MockDecoder.h"
 #include "../backend/MockDemuxer.h"
 

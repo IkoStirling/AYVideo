@@ -1,5 +1,5 @@
 #pragma once
-// AYVideoTypes.h �?core enums + result codes for the AYVideo module.
+// AYVideo/VideoTypes.h �?core enums + result codes for the AYVideo module.
 //
 // design.md §5 (V0.5): result-code discipline mirrors AYVoxel's VoxelResult
 // (Ok = 0, canonical codes, `Count` sentinel appended �?never inserted

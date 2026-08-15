@@ -1,4 +1,4 @@
-#include <AYVideoTypes.h>
+#include <AYVideo/VideoTypes.h>
 
 namespace ayt::video
 {

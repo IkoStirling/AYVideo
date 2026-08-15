@@ -7,8 +7,8 @@
 // ecs/ directory layout exists; nothing here is consumed by the engine
 // yet.
 
-#include <AYVideoMediaInfo.h>
-#include <AYVideoTypes.h>
+#include <AYVideo/VideoMediaInfo.h>
+#include <AYVideo/VideoTypes.h>
 #include <AYTime/Duration.h>
 
 #include <string>

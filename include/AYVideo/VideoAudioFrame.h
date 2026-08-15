@@ -1,5 +1,5 @@
 #pragma once
-// AYVideoAudioFrame.h — decoded PCM carrier (V2, design.md §11).
+// AYVideo/VideoAudioFrame.h — decoded PCM carrier (V2, design.md §11).
 //
 // Interleaved float32 samples owned by the decoder until the next
 // dequeueAudioFrame / flush / close. AudioQueue copies the payload so

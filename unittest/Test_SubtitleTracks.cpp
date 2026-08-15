@@ -5,10 +5,10 @@
 #include <vector>
 
 #include "AYTest.h"
-#include "AYVideoMediaInfo.h"
-#include "AYVideoPlayer.h"
-#include "AYVideoSubtitle.h"
-#include "AYVideoTypes.h"
+#include "AYVideo/VideoMediaInfo.h"
+#include "AYVideo/VideoPlayer.h"
+#include "AYVideo/VideoSubtitle.h"
+#include "AYVideo/VideoTypes.h"
 #include "../backend/MockDecoder.h"
 #include "../backend/MockDemuxer.h"
 

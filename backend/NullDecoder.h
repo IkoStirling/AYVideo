@@ -5,7 +5,7 @@
 // no-op Ok; dequeueFrame() reports the "no frame ready yet" contract
 // state (Ok + null frame); EndOfStream only after flush().
 
-#include <IAYVideoDecoder.h>
+#include <AYVideo/IVideoDecoder.h>
 
 namespace ayt::video
 {

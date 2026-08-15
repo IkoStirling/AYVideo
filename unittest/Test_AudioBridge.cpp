@@ -4,13 +4,13 @@
 // A-14), verifies attach/detach contracts when Idle/Stopped.
 
 #include "AYTest.h"
-#include "AYVideoPlayer.h"
-#include "AYVideoTypes.h"
+#include "AYVideo/VideoPlayer.h"
+#include "AYVideo/VideoTypes.h"
 #include "FFmpegTestMedia.h"
-#include "IAYVideoBackendFactory.h"
+#include "AYVideo/IVideoBackendFactory.h"
 
-#include <AYAudioEngine.h>
-#include <AYAudioTypes.h>
+#include <AYAudio/AudioEngine.h>
+#include <AYAudio/AudioTypes.h>
 
 using namespace ayt::video;
 using namespace ayt::audio;

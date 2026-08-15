@@ -1,5 +1,5 @@
 #pragma once
-// IAYVideoDecoder.h — codec decode seam.
+// AYVideo/IVideoDecoder.h — codec decode seam.
 //
 // design.md §8: turns demuxed packets into raw frames. A decoder owns
 // its frame pool — frame pointers returned by dequeueFrame are valid
@@ -9,10 +9,10 @@
 // single thread (the decode thread). Codecs are not thread-safe;
 // never drive one decoder from two threads.
 
-#include <AYVideoAudioFrame.h>
-#include <AYVideoFrame.h>
-#include <AYVideoMediaInfo.h>
-#include <AYVideoTypes.h>
+#include <AYVideo/VideoAudioFrame.h>
+#include <AYVideo/VideoFrame.h>
+#include <AYVideo/VideoMediaInfo.h>
+#include <AYVideo/VideoTypes.h>
 
 #include <string>
 

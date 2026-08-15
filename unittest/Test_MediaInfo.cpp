@@ -4,7 +4,7 @@
 // defaults, copy semantics, field assignment.
 
 #include "AYTest.h"
-#include "AYVideoMediaInfo.h"
+#include "AYVideo/VideoMediaInfo.h"
 
 using namespace ayt::video;
 

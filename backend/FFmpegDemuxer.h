@@ -12,9 +12,9 @@
 // Thread contract (design.md §4.4): one instance = one thread (the
 // demux thread). Never drive a single instance from two threads.
 
-#include <AYVideoMediaInfo.h>
-#include <AYVideoTypes.h>
-#include <IAYVideoDemuxer.h>
+#include <AYVideo/VideoMediaInfo.h>
+#include <AYVideo/VideoTypes.h>
+#include <AYVideo/IVideoDemuxer.h>
 
 #include <memory>
 

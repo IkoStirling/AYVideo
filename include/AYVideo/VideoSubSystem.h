@@ -1,5 +1,5 @@
 #pragma once
-// AYVideoSubSystem.h — Game-loop subsystem for AYVideo (design.md §15).
+// AYVideo/VideoSubSystem.h — Game-loop subsystem for AYVideo (design.md §15).
 //
 // Mirrors AYAudio AudioSubSystem: owns playback slots, pumps pullFrame
 // each update, optionally bridges PCM through AudioSubSystem's engine.
@@ -10,13 +10,13 @@
 // query. Entity VideoComponent binding is a later cross-module PR
 // (component POD already lives in ecs/VideoComponent.h).
 
-#include <AYVideoFrame.h>
-#include <AYVideoPlayer.h>
-#include <AYVideoTypes.h>
-#include <IAYVideoDecoder.h>
-#include <IAYVideoDemuxer.h>
-#include <IAYVideoFrameSink.h>
-#include <IVideoFrameTexture.h>
+#include <AYVideo/VideoFrame.h>
+#include <AYVideo/VideoPlayer.h>
+#include <AYVideo/VideoTypes.h>
+#include <AYVideo/IVideoDecoder.h>
+#include <AYVideo/IVideoDemuxer.h>
+#include <AYVideo/IVideoFrameSink.h>
+#include <AYVideo/IVideoFrameTexture.h>
 #include <AYTime/Duration.h>
 
 #include <AYGameLoop.h>

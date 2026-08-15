@@ -18,8 +18,8 @@
 #include <vector>
 
 #include "AYTest.h"
-#include "AYVideoPlayer.h"
-#include "AYVideoTypes.h"
+#include "AYVideo/VideoPlayer.h"
+#include "AYVideo/VideoTypes.h"
 #include "FFmpegTestMedia.h"
 #include "../backend/FFmpegDecoder.h"
 #include "../backend/FFmpegDemuxer.h"

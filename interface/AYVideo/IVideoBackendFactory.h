@@ -1,5 +1,5 @@
 #pragma once
-// IAYVideoBackendFactory.h — backend construction entry points.
+// AYVideo/IVideoBackendFactory.h — backend construction entry points.
 //
 // Mirrors AYAudioBackendFactory (sibling convention): free functions
 // exposed individually so tests and tools can swap backends without
@@ -11,9 +11,9 @@
 // Concrete backend types live in backend/ and are created only through
 // these factory functions.
 
-#include <IAYVideoDecoder.h>
-#include <IAYVideoDemuxer.h>
-#include <IVideoFrameTexture.h>
+#include <AYVideo/IVideoDecoder.h>
+#include <AYVideo/IVideoDemuxer.h>
+#include <AYVideo/IVideoFrameTexture.h>
 
 #include <memory>
 

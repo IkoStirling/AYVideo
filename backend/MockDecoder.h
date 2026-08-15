@@ -7,7 +7,7 @@
 // (deterministic pixel pattern), then EndOfStream after flush().
 // Interaction counters let tests assert the player↔decoder contract.
 
-#include <IAYVideoDecoder.h>
+#include <AYVideo/IVideoDecoder.h>
 
 #include <cstdint>
 #include <vector>

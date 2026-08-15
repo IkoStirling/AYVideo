@@ -5,8 +5,8 @@
 // libswscale. FFmpeg backends may later swap to swscale PRIVATEly
 // without changing this public helper signature.
 
-#include <AYVideoFrame.h>
-#include <AYVideoTypes.h>
+#include <AYVideo/VideoFrame.h>
+#include <AYVideo/VideoTypes.h>
 
 #include <cstdint>
 #include <vector>

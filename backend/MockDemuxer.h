@@ -6,7 +6,7 @@
 // packets (deterministic payload pattern) then EndOfStream. Interaction
 // counters let tests assert the player↔demuxer contract (design.md §19).
 
-#include <IAYVideoDemuxer.h>
+#include <AYVideo/IVideoDemuxer.h>
 
 #include <cstdint>
 #include <vector>
