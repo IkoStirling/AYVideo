@@ -45,6 +45,17 @@ VideoResult convertFrameToRgba8(const VideoFrame& frame,
 
     const uint32_t w = static_cast<uint32_t>(frame.width);
     const uint32_t h = static_cast<uint32_t>(frame.height);
+    // Guard against corrupt demux/decode geometry (MSVC <xmemory> asserts
+    // "invalid argument" on huge/overflowing vector::resize).
+    constexpr uint32_t kMaxDim = 8192u;
+    if (w > kMaxDim || h > kMaxDim)
+    {
+        return VideoResult::InvalidArgument;
+    }
+    if (static_cast<uint64_t>(w) * static_cast<uint64_t>(h) > (16ull * 1024ull * 1024ull))
+    {
+        return VideoResult::InvalidArgument;
+    }
     const size_t rgbaBytes = static_cast<size_t>(w) * static_cast<size_t>(h) * 4u;
 
     if (frame.format == VideoPixelFormat::RGBA8)

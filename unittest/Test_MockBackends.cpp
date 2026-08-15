@@ -58,10 +58,26 @@ TEST_SUITE(MockBackendsSuite)
         CHECK_INT_EQ(static_cast<int>(d.seek(ayt::time::Duration::fromMs(0))),
                      static_cast<int>(VideoResult::Ok));
         CHECK_INT_EQ(static_cast<int>(d.seekCount()), 1u);
-        // After seek the sequence restarts from the beginning.
+        // After seek(0) the sequence restarts from the beginning.
         CHECK_INT_EQ(static_cast<int>(d.readNextPacket(p)),
                      static_cast<int>(VideoResult::Ok));
         CHECK_INT_EQ(static_cast<int>(p.data[0]), 0);
+    }
+
+    TEST_CASE(MockDemuxerSeekJumpsToTargetPts) {
+        MockDemuxer d(10);
+        DemuxerOpenParams params;
+        CHECK_INT_EQ(static_cast<int>(d.open(params)),
+                     static_cast<int>(VideoResult::Ok));
+        // 200 ms @ 25 fps → packet index 5.
+        CHECK_INT_EQ(static_cast<int>(
+                         d.seek(ayt::time::Duration::fromUs(200'000))),
+                     static_cast<int>(VideoResult::Ok));
+        VideoPacket p;
+        CHECK_INT_EQ(static_cast<int>(d.readNextPacket(p)),
+                     static_cast<int>(VideoResult::Ok));
+        CHECK_INT_EQ(static_cast<int>(p.data[0]), 5);
+        CHECK_INT_EQ(static_cast<int>(p.pts.toUs()), 200'000);
     }
 
     TEST_CASE(MockDecoderReplaysFrameSequence) {

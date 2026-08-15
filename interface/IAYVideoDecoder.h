@@ -27,6 +27,12 @@ struct DecoderOpenParams
     MediaInfo media;             // container metadata hint (resolution,
                                  // fps, duration)
     bool decodeAudio = false;    // V2: false = video-only pipeline
+
+    // V6: preferred hardware decode path (FFmpeg backends). None = soft.
+    // Auto / explicit HW try first; on failure soft-open when
+    // allowSoftwareFallback is true (CI / headless safe default).
+    VideoDecodeAccel preferredAccel = VideoDecodeAccel::None;
+    bool allowSoftwareFallback = true;
 };
 
 class IAYVideoDecoder
@@ -40,6 +46,12 @@ public:
 
     virtual void close() noexcept = 0;
     virtual bool isOpen() const noexcept = 0;
+
+    // Actual accel in use after open() (None when soft / unopened).
+    virtual VideoDecodeAccel activeDecodeAccel() const noexcept
+    {
+        return VideoDecodeAccel::None;
+    }
 
     // Feeds one demuxed packet (compressed data). Packets must arrive in
     // stream order. Returns Ok even when no frame is produced yet (codec

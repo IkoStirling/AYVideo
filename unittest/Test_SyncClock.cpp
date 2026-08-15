@@ -10,7 +10,7 @@
 #include "AYTest.h"
 #include "AYVideoSyncClock.h"
 #include "AYVideoTypes.h"
-#include <aytime/TimePoint.h>
+#include <AYTime/TimePoint.h>
 
 using namespace ayt::video;
 

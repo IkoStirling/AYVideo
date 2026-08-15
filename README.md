@@ -40,9 +40,11 @@ player.stop();
 |---|---|---|
 | V0.5 | 骨架 + Null/Mock + 状态机 + 测试 | ✅ 2026-08-13 |
 | V1 | FFmpeg demux/decode + 解码线程 + SPSC + 最小播放 | ✅ 2026-08-14 |
-| V2 | audio-master A/V sync + AYAudio PCM 桥 + ECS | — |
-| V3 | AYRenderer 帧纹理桥 + 上屏 | — |
-| V4+ | seek 精修 / 字幕 / 网络流 | — |
+| V2 | audio-master A/V sync + AYAudio PCM 桥 + ECS | ✅ |
+| V3 | AYRenderer 帧纹理桥 + 上屏 | ✅ |
+| V4+ | seek / 字幕 / scrub 契约 / setRate↔timeScale | ✅（soft cues；FFmpeg cue 解码仍后） |
+| V5 | 网络流 HTTP(S) / RTSP / HLS | ✅（ABR=preferred bandwidth；真机验收可选） |
+| V6+ | 硬解 / 播放列表 / … | 硬解 API+软回退 ✅；零拷贝仍后 |
 
 详见 [design.md](design.md) §3。
 

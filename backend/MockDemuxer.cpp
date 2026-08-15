@@ -1,6 +1,8 @@
 #include "MockDemuxer.h"
 
-#include <aytime/Duration.h>
+#include <AYTime/Duration.h>
+
+#include <cstring>
 
 namespace ayt::video
 {
@@ -42,6 +44,8 @@ VideoResult MockDemuxer::open(const DemuxerOpenParams& params)
     _disconnected = false;
     _activeVideoStream = 0;
     _activeAudioStream = _provideMultiAudio ? 1 : -1;
+    _activeSubtitleStream = -1;
+    _subtitleCueEmitMask = 0;
     return VideoResult::Ok;
 }
 
@@ -112,6 +116,17 @@ VideoResult MockDemuxer::getMediaInfo(MediaInfo& outInfo) const
         sub.title = "Mock English";
         outInfo.subtitleTracks.push_back(sub);
         outInfo.hasSubtitles = true;
+        // Two fixed soft cues for CI (200 ms windows @ 25 fps timeline).
+        SubtitleCue c0{};
+        c0.start = ayt::time::Duration::fromUs(0);
+        c0.end = ayt::time::Duration::fromUs(200'000);
+        c0.text = "mock-cue-0";
+        SubtitleCue c1{};
+        c1.start = ayt::time::Duration::fromUs(200'000);
+        c1.end = ayt::time::Duration::fromUs(400'000);
+        c1.text = "mock-cue-1";
+        outInfo.softSubtitleCues.push_back(std::move(c0));
+        outInfo.softSubtitleCues.push_back(std::move(c1));
     }
     return VideoResult::Ok;
 }
@@ -147,6 +162,28 @@ VideoResult MockDemuxer::setActiveStreamIndices(int32_t videoStreamIndex,
     return VideoResult::Ok;
 }
 
+VideoResult MockDemuxer::setActiveSubtitleStreamIndex(int32_t streamIndex)
+{
+    if (!_open)
+    {
+        return VideoResult::NotInitialized;
+    }
+    if (streamIndex < -1)
+    {
+        return VideoResult::InvalidArgument;
+    }
+    if (streamIndex >= 0)
+    {
+        if (!_provideSubtitle || streamIndex != 3)
+        {
+            return VideoResult::InvalidArgument;
+        }
+    }
+    _activeSubtitleStream = streamIndex;
+    _subtitleCueEmitMask = 0;
+    return VideoResult::Ok;
+}
+
 VideoResult MockDemuxer::readNextPacket(VideoPacket& outPacket)
 {
     if (!_open)
@@ -164,6 +201,54 @@ VideoResult MockDemuxer::readNextPacket(VideoPacket& outPacket)
         ++_readCount;
         return VideoResult::DemuxError;
     }
+
+    // Emit soft-subtitle packets at cue starts before the matching video
+    // packet (streamIndex 3). Payload = UTF-8 text; duration = cue window.
+    if (_provideSubtitle && _activeSubtitleStream == 3)
+    {
+        const std::int64_t nowUs =
+            static_cast<std::int64_t>(_emitted) * 40'000;
+        struct SoftCue
+        {
+            std::int64_t startUs;
+            std::int64_t endUs;
+            const char* text;
+            uint32_t bit;
+        };
+        const SoftCue cues[] = {
+            {0, 200'000, "mock-cue-0", 1u},
+            {200'000, 400'000, "mock-cue-1", 2u},
+        };
+        for (const SoftCue& c : cues)
+        {
+            if ((_subtitleCueEmitMask & c.bit) != 0)
+            {
+                continue;
+            }
+            if (_emitted < _packetCount && nowUs == c.startUs)
+            {
+                _subtitleCueEmitMask |= c.bit;
+                const auto* bytes =
+                    reinterpret_cast<const uint8_t*>(c.text);
+                const uint32_t len =
+                    static_cast<uint32_t>(std::strlen(c.text));
+                _payload.assign(bytes, bytes + len);
+                outPacket = VideoPacket{};
+                outPacket.data = _payload.data();
+                outPacket.size = len;
+                outPacket.isVideo = false;
+                outPacket.isSubtitle = true;
+                outPacket.streamIndex = 3;
+                outPacket.pts = ayt::time::Duration::fromUs(c.startUs);
+                outPacket.dts = outPacket.pts;
+                outPacket.duration =
+                    ayt::time::Duration::fromUs(c.endUs - c.startUs);
+                ++_readCount;
+                return VideoResult::Ok;
+            }
+        }
+    }
+
     if (_emitted >= _packetCount)
     {
         return VideoResult::EndOfStream;
@@ -181,6 +266,7 @@ VideoResult MockDemuxer::readNextPacket(VideoPacket& outPacket)
     outPacket.data = _payload.data();
     outPacket.size = static_cast<uint32_t>(_payload.size());
     outPacket.isVideo = true;
+    outPacket.isSubtitle = false;
     outPacket.streamIndex = 0;
     outPacket.pts = ayt::time::Duration::fromUs(
         static_cast<std::int64_t>(_emitted) * 40'000); // 25 fps = 40 ms
@@ -190,7 +276,7 @@ VideoResult MockDemuxer::readNextPacket(VideoPacket& outPacket)
     return VideoResult::Ok;
 }
 
-VideoResult MockDemuxer::seek(const ayt::time::Duration& /*target*/,
+VideoResult MockDemuxer::seek(const ayt::time::Duration& target,
                               bool /*keyframeOnly*/)
 {
     if (!_open)
@@ -202,7 +288,20 @@ VideoResult MockDemuxer::seek(const ayt::time::Duration& /*target*/,
         return VideoResult::UnsupportedFormat;
     }
     ++_seekCount;
-    _emitted = 0; // next read restarts from the beginning (skeleton contract)
+    // Jump the synthetic cursor to the first packet at/after target
+    // (25 fps = 40 ms). Clamped to [0, packetCount].
+    std::int64_t idx = target.toUs() / 40'000;
+    if (idx < 0)
+    {
+        idx = 0;
+    }
+    if (idx > _packetCount)
+    {
+        idx = _packetCount;
+    }
+    _emitted = static_cast<int32_t>(idx);
+    // Re-arm subtitle emits for cues at/after the new cursor.
+    _subtitleCueEmitMask = 0;
     return VideoResult::Ok;
 }
 

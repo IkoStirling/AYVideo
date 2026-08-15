@@ -1,6 +1,6 @@
 #include "MockDecoder.h"
 
-#include <aytime/Duration.h>
+#include <AYTime/Duration.h>
 
 namespace ayt::video
 {
@@ -19,9 +19,10 @@ MockDecoder::MockDecoder(int32_t frameCount)
 {
 }
 
-VideoResult MockDecoder::open(const DecoderOpenParams& /*params*/)
+VideoResult MockDecoder::open(const DecoderOpenParams& params)
 {
     ++_openCount;
+    _params = params;
     _open = true;
     _emitted = 0;
     _flushed = false;
@@ -41,7 +42,7 @@ bool MockDecoder::isOpen() const noexcept
     return _open;
 }
 
-VideoResult MockDecoder::feedPacket(const VideoPacket& /*packet*/)
+VideoResult MockDecoder::feedPacket(const VideoPacket& packet)
 {
     if (!_open)
     {
@@ -55,11 +56,21 @@ VideoResult MockDecoder::feedPacket(const VideoPacket& /*packet*/)
         return VideoResult::DecodeError;
     }
     // A-12: a real feed after flush clears the drain state and restarts
-    // the scripted frame sequence (seek / loop restart).
+    // the scripted frame sequence at the packet's pts (seek / loop).
     if (_flushed)
     {
         _flushed = false;
-        _emitted = 0;
+        const std::int64_t ptsUs = packet.pts.toUs();
+        std::int64_t idx = (ptsUs > 0) ? (ptsUs / 40'000) : 0;
+        if (idx < 0)
+        {
+            idx = 0;
+        }
+        if (idx > _frameCount)
+        {
+            idx = _frameCount;
+        }
+        _emitted = static_cast<int32_t>(idx);
     }
     _fedAny = true;
     ++_feedCount;

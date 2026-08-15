@@ -33,6 +33,7 @@ public:
     VideoResult open(const DecoderOpenParams& params) override;
     void close() noexcept override;
     bool isOpen() const noexcept override;
+    VideoDecodeAccel activeDecodeAccel() const noexcept override;
     VideoResult feedPacket(const VideoPacket& packet) override;
     VideoResult dequeueFrame(VideoFrame& outFrame) override;
     VideoResult dequeueAudioFrame(AudioPcmFrame& outFrame) override;

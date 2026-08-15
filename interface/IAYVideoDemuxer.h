@@ -14,7 +14,7 @@
 #include <AYVideoFrame.h>
 #include <AYVideoMediaInfo.h>
 #include <AYVideoTypes.h>
-#include <aytime/Duration.h>
+#include <AYTime/Duration.h>
 
 #include <string>
 
@@ -23,9 +23,9 @@ namespace ayt::video
 
 struct DemuxerOpenParams
 {
-    // Container file path OR network URL (V5: http:// / https://).
+    // Container file path OR network URL (V5: http(s) / rtsp / HLS m3u8).
     std::string path;
-    // Hint; demuxer may degrade if false. Player forces false for URLs.
+    // Hint; demuxer may degrade if false. Player forces false for live RTSP.
     bool seekable = true;
 
     // V5 network options (ignored for local files). Timeouts in ms.
@@ -33,13 +33,54 @@ struct DemuxerOpenParams
     int32_t rwTimeoutMs = 15000;
     uint32_t reconnectMax = 0;       // 0 = no DecodeLoop reconnect (local)
     uint32_t reconnectDelayMs = 500; // backoff between reconnect attempts
+
+    // HLS ABR: preferred ceiling bitrate for master-playlist variant pick
+    // (FFmpeg `bandwidth`). 0 = demuxer default / auto.
+    uint32_t preferredBandwidthBps = 0;
+    // RTSP: prefer TCP interleaved transport (more firewall-friendly).
+    bool rtspPreferTcp = true;
 };
 
-// True when path looks like an HTTP(S) URL (V5 progressive streaming).
+// True when path looks like an HTTP(S) URL (V5 progressive / HLS).
 inline bool isHttpUrl(const std::string& path) noexcept
 {
     return path.compare(0, 7, "http://") == 0
         || path.compare(0, 8, "https://") == 0;
+}
+
+inline bool isRtspUrl(const std::string& path) noexcept
+{
+    return path.compare(0, 7, "rtsp://") == 0
+        || path.compare(0, 8, "rtsps://") == 0;
+}
+
+// HTTP(S) URL whose path (before ?/#) ends with .m3u8 — HLS playlist.
+inline bool isHlsUrl(const std::string& path) noexcept
+{
+    if (!isHttpUrl(path))
+    {
+        return false;
+    }
+    std::string::size_type end = path.find_first_of("?#");
+    if (end == std::string::npos)
+    {
+        end = path.size();
+    }
+    if (end < 5)
+    {
+        return false;
+    }
+    const char* ext = path.c_str() + (end - 5);
+    return ext[0] == '.'
+        && (ext[1] == 'm' || ext[1] == 'M')
+        && (ext[2] == '3')
+        && (ext[3] == 'u' || ext[3] == 'U')
+        && (ext[4] == '8');
+}
+
+inline bool isNetworkUrl(const std::string& path) noexcept
+{
+    return isHttpUrl(path) || isRtspUrl(path);
 }
 
 class IAYVideoDemuxer
@@ -77,6 +118,13 @@ public:
     // next play/seek (not mid-decode without flush).
     virtual VideoResult setActiveStreamIndices(int32_t /*videoStreamIndex*/,
                                                int32_t /*audioStreamIndex*/)
+    {
+        return VideoResult::Ok;
+    }
+
+    // Soft-subtitle stream for readNextPacket emission (-1 = off). Default
+    // no-op so Null/legacy backends stay valid.
+    virtual VideoResult setActiveSubtitleStreamIndex(int32_t /*streamIndex*/)
     {
         return VideoResult::Ok;
     }

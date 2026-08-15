@@ -42,6 +42,9 @@ add_executable(${TEST_TARGET}
     Test_MediaTracks.cpp         # V4 A/V multi-track selection
     Test_MemoryPressure.cpp      # V4 FrameQueue DropOldest + size bounds
     Test_NetworkStream.cpp       # V5 HTTP buffering + reconnect (Mock)
+    Test_ScrubRegression.cpp     # Scrub→play CatchUp + twitch + A/B open
+    Test_FrameStep.cpp           # Editor stepFrames ±1 while Paused
+    Test_DecodeAccel.cpp         # V6 preferredDecodeAccel (Mock)
 )
 
 # V3 GPU bridge — needs AYRenderer Noop backend (design.md §12).

@@ -56,7 +56,7 @@
 | N-06 | ECS VideoSubsystem 组件接入 | V2+ |
 | N-07 | 转码 / 剪辑 / 逐帧导出 / 离线 `.ayvideo` cook | 永久不做（AYResource 分工） |
 | N-08 | 字幕轨（软字幕渲染） | V4 foresight 预留 |
-| N-09 | 硬解（DXVA/CUDA） | 长期 foresight，FFmpeg 软解优先 |
+| N-09 | 硬解（DXVA/CUDA） | V6：API+软回退已入；零拷贝/平台矩阵后 |
 | N-10 | 多音轨 / 多视频轨自由切换 | V4 foresight |
 
 ---
@@ -573,10 +573,15 @@ AYRuntime/AYVideo/
 
 - [x] seek 帧精确（slice-1）：keyframe seek + `_minPresentPts` 丢弃 + pause→seek→play 管线重启；CFR ±1 帧 UT
 - [x] 错误恢复 / 丢帧（slice-2）：中途 `DemuxError`/`DecodeError` soft-skip，保持 Playing；Mock inject UT
-- [x] 字幕轨 discovery（slice-3）：`SubtitleTrackInfo` / player 选择 API；Mock + FFmpeg 枚举；无 cue 渲染
+- [x] 字幕轨 discovery（slice-3）：`SubtitleTrackInfo` / player 选择 API；Mock + FFmpeg 枚举
+- [x] 字幕 soft cues（slice-3b）：`SubtitleCue` + `MediaInfo::softSubtitleCues` + `pullActiveSubtitleCues`；Mock 双 cue UT
+- [x] 字幕 packet→cue（slice-3c）：`setActiveSubtitleStreamIndex` + DecodeLoop divert + `SubtitleCueQueue`；Mock 包发射 UT；FFmpeg 透传 text 包
 - [x] 多轨选择（slice-4）：`Video/AudioTrackInfo` + deferred `setActive*`（play/seek 应用）；Mock 双音轨 UT
 - [x] 内存压力（slice-5）：FrameQueue `DropOldest` + `size`/`dropped`；`queueStats`；AudioQueue drop 计数
 - [x] 双向 seek 精修（slice-6）：forward prefer non-BACKWARD `av_seek_frame` + fallback；forward→backward UT
+- [x] Scrub→play 契约（slice-7）：`PlaybackIntent` + Mock seek-by-pts；`Test_ScrubRegression`（CatchUp / twitch / A→B / 3-round soak）
+- [x] setRate↔AYAudio timeScale + `queueStats.audioStreamUnderruns`（slice-8）
+- [x] Editor 逐帧步进（slice-9）：`stepFrames(±1)` Paused；Demo `|</>|`；`Test_FrameStep`
 
 ### V5 网络流（对齐 §3 表；HTTP(S) progressive first）
 
@@ -584,8 +589,17 @@ AYRuntime/AYVideo/
 - [x] 缓冲水位：`setOnBufferingChanged` / `setBufferWatermarks`（Playing 内事件，无 Buffering 状态）
 - [x] 断流重连：DecodeLoop `reconnectMax` + demuxer.reconnect()；耗尽 → Failed
 - [x] Mock inject UT：`Test_NetworkStream`（seekable=false / buffering / reconnect success+exhausted）
-- [ ] RTSP / HLS ABR — foresight until later slice
-- [ ] 真实 HTTP 集成验收（可选；CI 仍以 Mock 为准）
+- [x] RTSP / HLS ABR：`isRtspUrl`/`isHlsUrl`；RTSP TCP+非 seek；HLS `bandwidth` + `setPreferredBandwidthBps`；Demo 放开 scheme
+- [ ] 真实 HTTP/RTSP/HLS 集成验收（可选；CI 仍以 Mock 为准）
+
+### V6+ foresight（平台碎片大；软解仍为默认）
+
+- [x] `VideoDecodeAccel` + `DecoderOpenParams::{preferredAccel,allowSoftwareFallback}`
+- [x] `AYVideoPlayer::setPreferredDecodeAccel` / `activeDecodeAccel`
+- [x] FFmpeg：Windows Auto 试 D3D11VA→DXVA2→CUDA；失败软解；`av_hwframe_transfer_data` CPU download
+- [x] Mock 透传 preference；`Test_DecodeAccel` + types sentinel
+- [ ] 零拷贝 GPU 纹理（D3D11/CUDA surface → AYRenderer）— 后续
+- [ ] 逐平台验收矩阵（Win D3D11VA / Linux VAAPI / macOS VideoToolbox）
 
 ---
 
@@ -676,7 +690,12 @@ cmake --build D:\Projects\out\build\x64-Debug --target AYVideo_Tests
 
 ## 21. Changelog
 
-- **2026-08-14 (V5 network)**：HTTP(S) progressive open（非 seekable + reconnect）；FrameQueue 缓冲水位事件；DecodeLoop 断流重连；`Test_NetworkStream`。OUT：RTSP/HLS ABR、AYNetwork 依赖。
+- **2026-08-15 (V6 hwaccel foresight)**：`VideoDecodeAccel`；FFmpeg 试硬解 + 软解回退 + `av_hwframe_transfer_data`；`setPreferredDecodeAccel`；OUT：零拷贝 GPU 纹理、逐平台验收。
+- **2026-08-15 (frame step)**：`AYVideoPlayer::stepFrames(±1)`（Paused；队列 +1 / Accurate −1）；Demo `|</>|`；`Test_FrameStep`。
+- **2026-08-15 (subtitle packets)**：`setActiveSubtitleStreamIndex`；DecodeLoop 分流 subtitle 包→`SubtitleCueQueue`；Mock 交织发射；FFmpeg 透传 text 轨包。
+- **2026-08-15 (high-leverage)**：Scrub 回归 UT（Mock seek-by-pts + CatchUp/twitch/A→B/soak）；`setRate`→`AudioEngine::setTimeScale` + `streamUnderrunCount`/`audioStreamUnderruns`；soft `SubtitleCue` + `pullActiveSubtitleCues`。
+- **2026-08-15 (V5 RTSP/HLS ABR)**：`isRtspUrl`/`isHlsUrl`/`isNetworkUrl`；DemuxerOpenParams `preferredBandwidthBps` + `rtspPreferTcp`；FFmpeg RTSP TCP/`stimeout` + HLS `bandwidth`；`setPreferredBandwidthBps`；Demo 放开 RTSP/HLS；`Test_NetworkStream` 扩展。
+- **2026-08-14 (V5 network)**：HTTP(S) progressive open（非 seekable + reconnect）；FrameQueue 缓冲水位事件；DecodeLoop 断流重连；`Test_NetworkStream`。OUT：AYNetwork 依赖。
 - **2026-08-14 (V4 bidir seek slice-6)**：FFmpegDemuxer forward seek 优先非 BACKWARD，失败回退；`PlayerSeekForwardThenBackward`。
 - **2026-08-14 (V4 memory slice-5)**：FrameQueue optional `DropOldest` + `size`/`dropped`；AudioQueue drop 计数；`player.queueStats()`。
 - **2026-08-14 (V4 multi-track slice-4)**：`AYVideoTrack` + MediaInfo 音视频轨列表；player deferred `setActive*`；FFmpeg/Mock `setActiveStreamIndices`。

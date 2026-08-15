@@ -39,6 +39,10 @@ struct MediaInfo
     // Soft-subtitle tracks (V4 discovery; empty when none).
     std::vector<SubtitleTrackInfo> subtitleTracks;
 
+    // Soft text cues for the active/discovered text track (Mock fills
+    // these; FFmpeg packet→cue decode is a later slice). Empty = none.
+    std::vector<SubtitleCue> softSubtitleCues;
+
     // All video/audio streams (V4 N-10). Scalar fields above mirror the
     // currently active selection.
     std::vector<VideoTrackInfo> videoTracks;

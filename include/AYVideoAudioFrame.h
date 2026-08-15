@@ -6,7 +6,7 @@
 // the player thread can push into AYAudio without racing the decode
 // thread.
 
-#include <aytime/Duration.h>
+#include <AYTime/Duration.h>
 
 #include <cstdint>
 

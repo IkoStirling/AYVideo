@@ -32,6 +32,13 @@ public:
     // Active stream indices after setActiveStreamIndices (tests).
     int32_t activeVideoStreamIndex() const noexcept { return _activeVideoStream; }
     int32_t activeAudioStreamIndex() const noexcept { return _activeAudioStream; }
+    int32_t activeSubtitleStreamIndex() const noexcept
+    {
+        return _activeSubtitleStream;
+    }
+
+    // Last successful open params (V5 network / ABR tests).
+    const DemuxerOpenParams& lastOpenParams() const noexcept { return _params; }
 
     // Fault injection (design.md §19): when enabled, open() returns
     // DemuxError — drives the player's Failed state.
@@ -76,6 +83,7 @@ public:
                      bool keyframeOnly = true) override;
     VideoResult setActiveStreamIndices(int32_t videoStreamIndex,
                                        int32_t audioStreamIndex) override;
+    VideoResult setActiveSubtitleStreamIndex(int32_t streamIndex) override;
     VideoResult reconnect() override;
 
 private:
@@ -88,6 +96,8 @@ private:
     bool _provideMultiAudio = false;
     int32_t _activeVideoStream = 0;
     int32_t _activeAudioStream = -1;
+    int32_t _activeSubtitleStream = -1;
+    uint32_t _subtitleCueEmitMask = 0; // bit i = cue i already emitted this pass
     int32_t _failReadAt = -1;
     bool _failReadDone = false;
     int32_t _disconnectAfter = -1;

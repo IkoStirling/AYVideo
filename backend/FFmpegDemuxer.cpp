@@ -12,7 +12,7 @@ extern "C" {
 #include <libavutil/time.h>
 }
 
-#include <aytime/Duration.h>
+#include <AYTime/Duration.h>
 
 #include <atomic>
 #include <cstdio>
@@ -69,8 +69,10 @@ struct FFmpegDemuxer::Impl
     AVFormatContext* formatContext = nullptr;
     int videoStreamIndex = -1;
     int audioStreamIndex = -1;
+    int subtitleStreamIndex = -1;
     AVRational videoTimebase{};
     AVRational audioTimebase{};
+    AVRational subtitleTimebase{};
     AVPacket* packet = nullptr;      // persistent packet buffer (owns data)
     bool open = false;
     std::string errorString;         // last av error text (diagnostics)
@@ -117,9 +119,13 @@ VideoResult FFmpegDemuxer::open(const DemuxerOpenParams& params)
     _impl->interrupt.store(false, std::memory_order_relaxed);
 
     AVDictionary* opts = nullptr;
-    if (isHttpUrl(params.path))
+    const bool http = isHttpUrl(params.path);
+    const bool rtsp = isRtspUrl(params.path);
+    const bool hls = isHlsUrl(params.path);
+    if (http || rtsp)
     {
-        // Timeouts are microseconds for FFmpeg rw_timeout / timeout.
+        // Timeouts are microseconds for FFmpeg rw_timeout / timeout /
+        // RTSP stimeout.
         const int64_t openUs =
             static_cast<int64_t>(params.openTimeoutMs > 0 ? params.openTimeoutMs
                                                          : 10000)
@@ -130,19 +136,46 @@ VideoResult FFmpegDemuxer::open(const DemuxerOpenParams& params)
             * 1000;
         av_dict_set_int(&opts, "timeout", openUs, 0);
         av_dict_set_int(&opts, "rw_timeout", rwUs, 0);
-        av_dict_set(&opts, "reconnect", "1", 0);
-        av_dict_set(&opts, "reconnect_streamed", "1", 0);
-        av_dict_set(&opts, "reconnect_on_network_error", "1", 0);
-        if (params.reconnectDelayMs > 0)
+        if (http)
         {
-            av_dict_set_int(&opts, "reconnect_delay_max",
-                            static_cast<int64_t>(params.reconnectDelayMs), 0);
+            av_dict_set(&opts, "reconnect", "1", 0);
+            av_dict_set(&opts, "reconnect_streamed", "1", 0);
+            av_dict_set(&opts, "reconnect_on_network_error", "1", 0);
+            if (params.reconnectDelayMs > 0)
+            {
+                av_dict_set_int(&opts, "reconnect_delay_max",
+                                static_cast<int64_t>(params.reconnectDelayMs),
+                                0);
+            }
+            // Progressive / HLS: keep probe modest so TTFB stays reasonable.
+            av_dict_set_int(&opts, "probesize", 2 * 1024 * 1024, 0);
+            av_dict_set_int(&opts, "analyzeduration", 2 * 1000 * 1000, 0);
+            // Do NOT set seekable=0 here — MP4 often needs a seek to the
+            // trailing moov during find_stream_info.
         }
-        // Progressive: keep probe modest so TTFB stays reasonable.
-        av_dict_set_int(&opts, "probesize", 2 * 1024 * 1024, 0);
-        av_dict_set_int(&opts, "analyzeduration", 2 * 1000 * 1000, 0);
-        // Do NOT set seekable=0 here — MP4 often needs a seek to the
-        // trailing moov during find_stream_info.
+        if (hls)
+        {
+            // Master-playlist ABR: FFmpeg picks a variant at/under this
+            // ceiling; 0 leaves demuxer default (auto).
+            if (params.preferredBandwidthBps > 0)
+            {
+                av_dict_set_int(&opts, "bandwidth",
+                                static_cast<int64_t>(
+                                    params.preferredBandwidthBps),
+                                0);
+            }
+            av_dict_set(&opts, "http_persistent", "1", 0);
+        }
+        if (rtsp)
+        {
+            if (params.rtspPreferTcp)
+            {
+                av_dict_set(&opts, "rtsp_transport", "tcp", 0);
+            }
+            // RTSP socket timeout (µs); distinct from HTTP rw_timeout.
+            av_dict_set_int(&opts, "stimeout", openUs, 0);
+            av_dict_set_int(&opts, "max_delay", 500000, 0);
+        }
     }
 
     // avformat_open_input takes ownership of ctx even on failure.
@@ -447,14 +480,20 @@ VideoResult FFmpegDemuxer::readNextPacket(VideoPacket& outPacket)
         _impl->pendingPacket = false;
 
         const int streamIndex = _impl->packet->stream_index;
-        if (streamIndex != _impl->videoStreamIndex && streamIndex != _impl->audioStreamIndex)
+        const bool isVideo = streamIndex == _impl->videoStreamIndex;
+        const bool isAudio = streamIndex == _impl->audioStreamIndex;
+        const bool isSub =
+            _impl->subtitleStreamIndex >= 0
+            && streamIndex == _impl->subtitleStreamIndex;
+        if (!isVideo && !isAudio && !isSub)
         {
             av_packet_unref(_impl->packet);
             continue;
         }
 
-        const bool isVideo = streamIndex == _impl->videoStreamIndex;
-        const AVRational& tb = isVideo ? _impl->videoTimebase : _impl->audioTimebase;
+        const AVRational& tb =
+            isVideo ? _impl->videoTimebase
+                    : (isSub ? _impl->subtitleTimebase : _impl->audioTimebase);
         const int64_t rawPts =
             _impl->packet->pts != AV_NOPTS_VALUE
                 ? _impl->packet->pts
@@ -468,9 +507,15 @@ VideoResult FFmpegDemuxer::readNextPacket(VideoPacket& outPacket)
         outPacket.data = _impl->packet->data;
         outPacket.size = static_cast<uint32_t>(_impl->packet->size);
         outPacket.isVideo = isVideo;
+        outPacket.isSubtitle = isSub;
         outPacket.streamIndex = streamIndex;
         outPacket.pts = ayt::time::Duration::fromUs(avRescaleUs(rawPts, tb));
         outPacket.dts = ayt::time::Duration::fromUs(avRescaleUs(rawDts, tb));
+        if (_impl->packet->duration > 0)
+        {
+            outPacket.duration = ayt::time::Duration::fromUs(
+                avRescaleUs(_impl->packet->duration, tb));
+        }
         if (isVideo)
         {
             _impl->lastVideoPtsUs = outPacket.pts.toUs();
@@ -670,6 +715,34 @@ VideoResult FFmpegDemuxer::setActiveStreamIndices(int32_t videoStreamIndex,
     {
         _impl->audioStreamIndex = -1;
     }
+    return VideoResult::Ok;
+}
+
+VideoResult FFmpegDemuxer::setActiveSubtitleStreamIndex(int32_t streamIndex)
+{
+    if (!_impl->open || !_impl->formatContext)
+    {
+        return VideoResult::NotInitialized;
+    }
+    if (streamIndex < -1)
+    {
+        return VideoResult::InvalidArgument;
+    }
+    if (streamIndex < 0)
+    {
+        _impl->subtitleStreamIndex = -1;
+        return VideoResult::Ok;
+    }
+    const AVFormatContext* ctx = _impl->formatContext;
+    if (static_cast<unsigned>(streamIndex) >= ctx->nb_streams
+        || !ctx->streams[streamIndex]
+        || ctx->streams[streamIndex]->codecpar->codec_type
+               != AVMEDIA_TYPE_SUBTITLE)
+    {
+        return VideoResult::InvalidArgument;
+    }
+    _impl->subtitleStreamIndex = streamIndex;
+    _impl->subtitleTimebase = ctx->streams[streamIndex]->time_base;
     return VideoResult::Ok;
 }
 

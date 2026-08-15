@@ -1,8 +1,8 @@
 #pragma once
-// AYVideoTypes.h â€?core enums + result codes for the AYVideo module.
+// AYVideoTypes.h ï¿½?core enums + result codes for the AYVideo module.
 //
 // design.md Â§5 (V0.5): result-code discipline mirrors AYVoxel's VoxelResult
-// (Ok = 0, canonical codes, `Count` sentinel appended â€?never inserted
+// (Ok = 0, canonical codes, `Count` sentinel appended ï¿½?never inserted
 // mid-list). All public mutators return VideoResult; void failure paths
 // are forbidden (design.md Â§18 anti-pattern table).
 
@@ -12,7 +12,7 @@ namespace ayt::video
 {
 
 // ---------------------------------------------------------------------------
-// Result codes. Canonical list â€?append-only; never renumber, never insert
+// Result codes. Canonical list ï¿½?append-only; never renumber, never insert
 // in the middle. `Count` is the sentinel used to bound loops and to
 // static_assert coverage in tests.
 // ---------------------------------------------------------------------------
@@ -31,7 +31,7 @@ enum class VideoResult : uint8_t
     OutOfMemory,         // frame / packet allocation failed
     QueueFull,           // frame queue at capacity (backpressure signal)
     Cancelled,           // operation superseded by seek / flush / stop
-    Count                // sentinel â€?number of canonical codes
+    Count                // sentinel ï¿½?number of canonical codes
 };
 
 // Human-readable name for diagnostics. Every code must be covered by
@@ -54,6 +54,24 @@ enum class VideoPixelFormat : uint8_t
 };
 
 const char* toString(VideoPixelFormat format) noexcept;
+
+// V6 foresight: preferred hardware decode path. Platform support is
+// fragmented ï¿½ Auto tries a platform-local order then soft-falls back.
+// Explicit CUDA / VideoToolbox / VAAPI may soft-fallback when unavailable
+// (DecoderOpenParams::allowSoftwareFallback).
+enum class VideoDecodeAccel : uint8_t
+{
+    None = 0,      // force software
+    Auto,          // platform try-order + soft fallback
+    D3D11VA,       // Windows
+    DXVA2,         // Windows (legacy)
+    CUDA,          // NVIDIA
+    VideoToolbox,  // Apple
+    VAAPI,         // Linux
+    Count
+};
+
+const char* toString(VideoDecodeAccel accel) noexcept;
 
 // V4 memory pressure: FrameQueue overflow policy (default Block).
 enum class FrameQueueOverflowPolicy : uint8_t

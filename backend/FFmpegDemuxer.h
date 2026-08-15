@@ -39,6 +39,7 @@ public:
                      bool keyframeOnly = true) override;
     VideoResult setActiveStreamIndices(int32_t videoStreamIndex,
                                        int32_t audioStreamIndex) override;
+    VideoResult setActiveSubtitleStreamIndex(int32_t streamIndex) override;
     VideoResult reconnect() override;
     void requestAbort() noexcept override;
     void clearAbort() noexcept override;

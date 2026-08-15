@@ -6,8 +6,8 @@
 // installed (AYAudio voicePositionFrames via the PCM bridge, §11).
 
 #include <AYVideoTypes.h>
-#include <aytime/Duration.h>
-#include <aytime/TimePoint.h>
+#include <AYTime/Duration.h>
+#include <AYTime/TimePoint.h>
 
 #include <cstdint>
 

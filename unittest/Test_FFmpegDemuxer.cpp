@@ -20,7 +20,7 @@
 #include "FFmpegTestMedia.h"
 #include "../backend/FFmpegDemuxer.h"
 
-#include <aytime/Duration.h>
+#include <AYTime/Duration.h>
 
 using namespace ayt::video;
 using namespace ayt::testmedia;

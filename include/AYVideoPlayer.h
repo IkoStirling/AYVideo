@@ -22,12 +22,13 @@
 #include <IAYVideoBackendFactory.h>
 #include <IAYVideoDecoder.h>
 #include <IAYVideoDemuxer.h>
-#include <aytime/Duration.h>
+#include <AYTime/Duration.h>
 
+#include <chrono>
 #include <functional>
 #include <memory>
 #include <string>
-#include <chrono>
+#include <vector>
 
 namespace ayt::audio
 {
@@ -40,6 +41,7 @@ namespace ayt::video
 class DecodeLoop;
 class FrameQueue;
 class AudioQueue;
+class SubtitleCueQueue;
 struct QueuedFrame;
 
 // ---------------------------------------------------------------------------
@@ -122,6 +124,11 @@ public:
     VideoResult seek(const ayt::time::Duration& target,
                      SeekMode mode = SeekMode::Accurate);
 
+    // Editor frame-step (V6 foresight slice). Valid from Paused (Playing
+    // auto-pauses). delta must be ±1. Stays Paused; updates currentFrame
+    // and freezes the presentation clock at the new picture pts.
+    VideoResult stepFrames(int delta);
+
     // Drain frames from an in-loop seek into `_held`. Non-blocking.
     // Scrub: keeps the latest decoded frame (frame-by-frame drag).
     // Accurate/Keyframe: first acceptable frame for the mode.
@@ -170,6 +177,19 @@ public:
     // Ignored for local files (reconnectMax == 0).
     void setBufferWatermarks(uint32_t low, uint32_t high) noexcept;
 
+    // V5 HLS ABR: preferred ceiling bitrate (bps) applied on next open()
+    // for master playlists (FFmpeg `bandwidth`). 0 = auto. Ignored for
+    // progressive HTTP / RTSP / local files.
+    void setPreferredBandwidthBps(uint32_t bps) noexcept;
+    uint32_t preferredBandwidthBps() const noexcept;
+
+    // V6 hardware decode preference (applied on next open). Auto tries a
+    // platform-local order then soft-falls back. activeDecodeAccel()
+    // reports what the decoder actually armed after open.
+    void setPreferredDecodeAccel(VideoDecodeAccel accel) noexcept;
+    VideoDecodeAccel preferredDecodeAccel() const noexcept;
+    VideoDecodeAccel activeDecodeAccel() const noexcept;
+
     // V2: optional AYAudio engine for PCM bridge + AudioMaster sync
     // (design.md §11). nullptr clears the bridge (EngineClock fallback).
     // Must be called while Idle/Stopped (or before open); InvalidState
@@ -193,12 +213,14 @@ public:
     VideoResult getMediaInfo(MediaInfo& outInfo) const;
 
     // V4 soft-subtitle track discovery (N-08). Valid from Ready/Playing/
-    // Paused/Seeking. setActiveSubtitleTrack stores selection only —
-    // cue demux/render is not implemented in this slice (-1 = off).
+    // Paused/Seeking. setActiveSubtitleTrack(-1) clears cues; selecting a
+    // track arms soft cues from MediaInfo (Mock / sidecar).
     uint32_t subtitleTrackCount() const noexcept;
     VideoResult getSubtitleTrack(uint32_t index, SubtitleTrackInfo& out) const;
     VideoResult setActiveSubtitleTrack(int32_t index) noexcept;
     int32_t activeSubtitleTrack() const noexcept;
+    // Cues active at the current presentation clock (empty when off).
+    VideoResult pullActiveSubtitleCues(std::vector<SubtitleCue>& out) const;
 
     // V4 N-10: A/V track discovery + deferred selection (applied on next
     // play/seek via demuxer setActiveStreamIndices). Seamless mid-play
@@ -228,6 +250,8 @@ public:
         uint32_t audioSize = 0;
         uint32_t audioCapacity = 0;
         uint64_t audioDropped = 0;
+        // AYAudio stream ring underrun events since attach (0 if no engine).
+        uint64_t audioStreamUnderruns = 0;
     };
     QueueStats queueStats() const noexcept;
 
@@ -307,8 +331,10 @@ private:
     // (set by seek(); cleared on open/stop / play-from-Ready restart).
     ayt::time::Duration _minPresentPts{};
     // V4: selected subtitle track index into MediaInfo::subtitleTracks,
-    // or -1 when off. Selection only — no cue pipeline yet.
+    // or -1 when off. Soft cues arm from MediaInfo::softSubtitleCues.
     int32_t _activeSubtitleTrack = -1;
+    std::vector<SubtitleCue> _subtitleCues;
+    std::unique_ptr<SubtitleCueQueue> _subtitleCueQueue;
     int32_t _activeVideoTrack = 0;   // index into MediaInfo::videoTracks
     int32_t _activeAudioTrack = 0;   // index into MediaInfo::audioTracks (-1 off)
     FrameQueueOverflowPolicy _frameOverflowPolicy =
@@ -317,6 +343,8 @@ private:
     // V5 network progressive: last open params + buffering watermarks.
     DemuxerOpenParams _demuxParams{};
     bool _networkStreaming = false;
+    uint32_t _preferredBandwidthBps = 0;
+    VideoDecodeAccel _preferredDecodeAccel = VideoDecodeAccel::None;
     bool _buffering = false;
     bool _clockGated = false; // true after startLoop until first frame ready
     bool _pipelinePrimed = false; // demux/decoder already at clock after seek
@@ -330,6 +358,7 @@ private:
     uint64_t _awaitingSeekSerial = 0;
     // Steady-clock start of Accurate floor wait (for floor.ready logs).
     std::chrono::steady_clock::time_point _floorWaitStarted{};
+    uint32_t _gateTimeoutRetries = 0;
     uint32_t _bufferLow = 0;   // enter buffering when size <= low
     uint32_t _bufferHigh = 2;  // exit buffering when size >= high
 
@@ -337,6 +366,9 @@ private:
     ayt::audio::AudioEngine* _audioEngine = nullptr;
     uint32_t _audioStreamId = 0;   // ayt::audio::AudioStreamId
     uint32_t _audioVoice = 0;      // ayt::audio::VoiceHandle
+    // Media-time origin for AudioMaster: voicePositionFrames restarts at 0
+    // after every bridge rebuild, so position = base + voice.
+    std::int64_t _audioMasterBaseUs = 0;
 };
 
 } // namespace ayt::video

@@ -1,4 +1,4 @@
-// Test_NetworkStream.cpp — V5 HTTP progressive: buffering + reconnect.
+// Test_NetworkStream.cpp — V5 network: HTTP progressive + RTSP/HLS ABR.
 
 #include <chrono>
 #include <memory>
@@ -8,10 +8,11 @@
 #include "AYTest.h"
 #include "AYVideoPlayer.h"
 #include "AYVideoTypes.h"
+#include "IAYVideoDemuxer.h"
 #include "../backend/MockDecoder.h"
 #include "../backend/MockDemuxer.h"
 
-#include <aytime/TimePoint.h>
+#include <AYTime/TimePoint.h>
 
 using namespace ayt::video;
 
@@ -213,6 +214,64 @@ TEST_SUITE(NetworkStreamSuite)
         CHECK_TRUE(got >= 3);
         CHECK_TRUE(!player.isBuffering());
         CHECK_INT_EQ(static_cast<int>(demuxRaw->reconnectCount()), 0);
+        CHECK_INT_EQ(static_cast<int>(player.stop()),
+                     static_cast<int>(VideoResult::Ok));
+    }
+
+    TEST_CASE(UrlHelpersClassifyRtspHls) {
+        CHECK_TRUE(isRtspUrl("rtsp://cam/live"));
+        CHECK_TRUE(isRtspUrl("rtsps://cam/live"));
+        CHECK_TRUE(!isRtspUrl("http://cam/live"));
+        CHECK_TRUE(isHlsUrl("https://cdn/a/playlist.m3u8"));
+        CHECK_TRUE(isHlsUrl("http://cdn/live.M3U8?token=1"));
+        CHECK_TRUE(!isHlsUrl("http://cdn/clip.mp4"));
+        CHECK_TRUE(!isHlsUrl("rtsp://cam/live.m3u8"));
+        CHECK_TRUE(isNetworkUrl("rtsp://x"));
+        CHECK_TRUE(isNetworkUrl("https://x/a.m3u8"));
+        CHECK_TRUE(!isNetworkUrl("D:/media/a.mp4"));
+    }
+
+    TEST_CASE(RtspOpenRejectsSeek) {
+        FakeNow::us = 0;
+        auto demux = std::make_unique<MockDemuxer>(8);
+        MockDemuxer* demuxRaw = demux.get();
+        AYVideoPlayer player(std::move(demux), std::make_unique<MockDecoder>(8),
+                             &FakeNow::tick);
+        CHECK_INT_EQ(static_cast<int>(player.open("rtsp://cam.example/live")),
+                     static_cast<int>(VideoResult::Ok));
+        CHECK_TRUE(!demuxRaw->lastOpenParams().seekable);
+        CHECK_INT_EQ(static_cast<int>(demuxRaw->lastOpenParams().reconnectMax),
+                     3);
+        CHECK_TRUE(demuxRaw->lastOpenParams().rtspPreferTcp);
+        CHECK_INT_EQ(static_cast<int>(
+                         player.seek(ayt::time::Duration::fromUs(80'000))),
+                     static_cast<int>(VideoResult::UnsupportedFormat));
+        CHECK_INT_EQ(static_cast<int>(player.stop()),
+                     static_cast<int>(VideoResult::Ok));
+    }
+
+    TEST_CASE(HlsOpenPassesPreferredBandwidth) {
+        FakeNow::us = 0;
+        auto demux = std::make_unique<MockDemuxer>(8);
+        MockDemuxer* demuxRaw = demux.get();
+        AYVideoPlayer player(std::move(demux), std::make_unique<MockDecoder>(8),
+                             &FakeNow::tick);
+        player.setPreferredBandwidthBps(2'500'000);
+        CHECK_INT_EQ(player.preferredBandwidthBps(), 2'500'000u);
+        CHECK_INT_EQ(
+            static_cast<int>(
+                player.open("https://cdn.example/master.m3u8")),
+            static_cast<int>(VideoResult::Ok));
+        CHECK_TRUE(demuxRaw->lastOpenParams().seekable);
+        CHECK_INT_EQ(
+            static_cast<int>(demuxRaw->lastOpenParams().preferredBandwidthBps),
+            2'500'000);
+        CHECK_INT_EQ(static_cast<int>(demuxRaw->lastOpenParams().reconnectMax),
+                     3);
+        // HLS VOD remains seekable through the player.
+        CHECK_INT_EQ(static_cast<int>(
+                         player.seek(ayt::time::Duration::fromUs(40'000))),
+                     static_cast<int>(VideoResult::Ok));
         CHECK_INT_EQ(static_cast<int>(player.stop()),
                      static_cast<int>(VideoResult::Ok));
     }

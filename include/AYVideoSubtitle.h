@@ -1,11 +1,14 @@
 #pragma once
-// AYVideoSubtitle.h — soft-subtitle track metadata (V4 foresight N-08).
+// AYVideoSubtitle.h — soft-subtitle track metadata + text cues.
 //
-// Discovery-only: MediaInfo / player can enumerate tracks. Cue demux,
-// ASS/libass render, and burn-in are OUT of this slice.
+// Track discovery ships in V4. Soft text cues (start/end/text) are the
+// minimal present path for Mock / sidecar; ASS/libass burn-in and bitmap
+// decode remain out of scope.
 
 #include <cstdint>
 #include <string>
+
+#include <AYTime/Duration.h>
 
 namespace ayt::video
 {
@@ -28,6 +31,14 @@ struct SubtitleTrackInfo
     std::string codec;     // container codec name ("subrip", "ass", ...)
     std::string language;  // ISO-ish tag when present ("eng")
     std::string title;     // optional stream title
+};
+
+// Active soft cue window. Player filters by presentation clock.
+struct SubtitleCue
+{
+    ayt::time::Duration start{};
+    ayt::time::Duration end{};
+    std::string text;
 };
 
 } // namespace ayt::video

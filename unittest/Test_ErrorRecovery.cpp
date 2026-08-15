@@ -10,7 +10,7 @@
 #include "../backend/MockDecoder.h"
 #include "../backend/MockDemuxer.h"
 
-#include <aytime/TimePoint.h>
+#include <AYTime/TimePoint.h>
 
 using namespace ayt::video;
 

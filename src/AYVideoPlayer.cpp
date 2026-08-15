@@ -4,6 +4,7 @@
 #include "DecodeLoop.h"
 #include "FrameQueue.h"
 #include "SeekLog.h"
+#include "SubtitleCueQueue.h"
 
 #include <AYAudioEngine.h>
 #include <AYAudioTypes.h>
@@ -78,6 +79,7 @@ AYVideoPlayer::AYVideoPlayer(
     , _decoder(std::move(decoder))
     , _queue(std::make_unique<FrameQueue>())
     , _audioQueue(std::make_unique<AudioQueue>())
+    , _subtitleCueQueue(std::make_unique<SubtitleCueQueue>())
     , _clock(now)
 {
     _queue->setOverflowPolicy(_frameOverflowPolicy);
@@ -101,6 +103,8 @@ AYVideoPlayer::AYVideoPlayer(AYVideoPlayer&& other) noexcept
     _path = std::move(other._path);
     _queue = std::move(other._queue);
     _audioQueue = std::move(other._audioQueue);
+    _subtitleCueQueue = std::move(other._subtitleCueQueue);
+    _subtitleCues = std::move(other._subtitleCues);
     _loop = std::move(other._loop);
     _held = std::move(other._held);
     _presented = std::move(other._presented);
@@ -112,6 +116,8 @@ AYVideoPlayer::AYVideoPlayer(AYVideoPlayer&& other) noexcept
     _frameOverflowPolicy = other._frameOverflowPolicy;
     _demuxParams = other._demuxParams;
     _networkStreaming = other._networkStreaming;
+    _preferredBandwidthBps = other._preferredBandwidthBps;
+    _preferredDecodeAccel = other._preferredDecodeAccel;
     _buffering = other._buffering;
     _clockGated = other._clockGated;
     _pipelinePrimed = other._pipelinePrimed;
@@ -125,9 +131,12 @@ AYVideoPlayer::AYVideoPlayer(AYVideoPlayer&& other) noexcept
     other._audioStreamId = 0;
     other._audioVoice = 0;
     other._activeSubtitleTrack = -1;
+    other._subtitleCues.clear();
     other._activeVideoTrack = 0;
     other._activeAudioTrack = 0;
     other._networkStreaming = false;
+    other._preferredBandwidthBps = 0;
+    other._preferredDecodeAccel = VideoDecodeAccel::None;
     other._buffering = false;
     other._clockGated = false;
     other._pipelinePrimed = false;
@@ -158,6 +167,8 @@ AYVideoPlayer& AYVideoPlayer::operator=(AYVideoPlayer&& other) noexcept
     _path = std::move(other._path);
     _queue = std::move(other._queue);
     _audioQueue = std::move(other._audioQueue);
+    _subtitleCueQueue = std::move(other._subtitleCueQueue);
+    _subtitleCues = std::move(other._subtitleCues);
     _loop = std::move(other._loop);
     _held = std::move(other._held);
     _presented = std::move(other._presented);
@@ -169,6 +180,8 @@ AYVideoPlayer& AYVideoPlayer::operator=(AYVideoPlayer&& other) noexcept
     _frameOverflowPolicy = other._frameOverflowPolicy;
     _demuxParams = other._demuxParams;
     _networkStreaming = other._networkStreaming;
+    _preferredBandwidthBps = other._preferredBandwidthBps;
+    _preferredDecodeAccel = other._preferredDecodeAccel;
     _buffering = other._buffering;
     _clockGated = other._clockGated;
     _pipelinePrimed = other._pipelinePrimed;
@@ -182,9 +195,12 @@ AYVideoPlayer& AYVideoPlayer::operator=(AYVideoPlayer&& other) noexcept
     other._audioStreamId = 0;
     other._audioVoice = 0;
     other._activeSubtitleTrack = -1;
+    other._subtitleCues.clear();
     other._activeVideoTrack = 0;
     other._activeAudioTrack = 0;
     other._networkStreaming = false;
+    other._preferredBandwidthBps = 0;
+    other._preferredDecodeAccel = VideoDecodeAccel::None;
     other._buffering = false;
     other._clockGated = false;
     other._pipelinePrimed = false;
@@ -250,6 +266,35 @@ void AYVideoPlayer::setBufferWatermarks(uint32_t low, uint32_t high) noexcept
 {
     _bufferLow = low;
     _bufferHigh = high < low ? low : high;
+}
+
+void AYVideoPlayer::setPreferredBandwidthBps(uint32_t bps) noexcept
+{
+    _preferredBandwidthBps = bps;
+}
+
+uint32_t AYVideoPlayer::preferredBandwidthBps() const noexcept
+{
+    return _preferredBandwidthBps;
+}
+
+void AYVideoPlayer::setPreferredDecodeAccel(VideoDecodeAccel accel) noexcept
+{
+    _preferredDecodeAccel = accel;
+}
+
+VideoDecodeAccel AYVideoPlayer::preferredDecodeAccel() const noexcept
+{
+    return _preferredDecodeAccel;
+}
+
+VideoDecodeAccel AYVideoPlayer::activeDecodeAccel() const noexcept
+{
+    if (!_decoder)
+    {
+        return VideoDecodeAccel::None;
+    }
+    return _decoder->activeDecodeAccel();
 }
 
 void AYVideoPlayer::notifyBufferingChanged(bool buffering) noexcept
@@ -321,6 +366,11 @@ void AYVideoPlayer::armClockGate() noexcept
     // frame is queued.
     _clockGated = true;
     _clock.markPaused();
+    _gateTimeoutRetries = 0;
+    if (_floorWaitStarted.time_since_epoch().count() == 0)
+    {
+        _floorWaitStarted = std::chrono::steady_clock::now();
+    }
     if (!_buffering)
     {
         _buffering = true;
@@ -335,20 +385,21 @@ bool AYVideoPlayer::tryReleaseClockGate() noexcept
         return false;
     }
 
-    // In-flight Keyframe/Accurate seek: ignore pre-apply drain. Taking a
-    // stale queued frame here rewound the clock to the old pts (often
-    // near t=0) right after the user scrubbed mid-file.
-    if (_awaitingSeekPreview && _loop
-        && _loop->seekAppliedSerial() < _awaitingSeekSerial)
+    const uint64_t needSerial = _awaitingSeekSerial;
+    auto isCurrentGen = [&](const QueuedFrame& qf) {
+        return needSerial == 0 || qf.seekSerial >= needSerial;
+    };
+
+    // In-flight seek: ignore pre-apply drain. Taking a stale queued frame
+    // here rewound the clock to the old pts right after a mid-file scrub.
+    if (_loop && needSerial > 0
+        && _loop->seekAppliedSerial() < needSerial)
     {
-        // Drop only pre-generation frames; do not bulk-clear (races the
-        // first post-apply push).
         QueuedFrame junk;
         while (_queue->tryPop(junk))
         {
-            if (junk.seekSerial >= _awaitingSeekSerial)
+            if (isCurrentGen(junk))
             {
-                // Should not happen before apply; keep it staged.
                 _held = std::make_unique<QueuedFrame>(std::move(junk));
                 break;
             }
@@ -363,11 +414,55 @@ bool AYVideoPlayer::tryReleaseClockGate() noexcept
         return false;
     }
 
-    // Drop anything below the seek floor, stage the first usable frame.
-    // Do not wait for bufferHigh here — that delayed first paint by an
-    // extra GOP's worth of decode on progressive HTTP seeks.
-    // Pre-floor frames are discarded silently (DecodeLoop also drops
-    // them before enqueue after Accurate seek — this is a safety net).
+    auto acceptHeld = [&]() {
+        // Snap the seek floor down to the accepted picture. Otherwise a
+        // frame admitted via floor-slack (or first dropBelow output a few
+        // us early) is immediately discarded by presentDueFrame as
+        // beforeSeekFloor — clock free-runs, picture stays frozen.
+        if (_held->frame.pts < _minPresentPts)
+        {
+            _minPresentPts = _held->frame.pts;
+        }
+        const ayt::time::Duration anchor = _held->frame.pts;
+        _clock.reset(anchor);
+        _audioMasterBaseUs = anchor.toUs();
+        _clock.markResumed();
+        _clockGated = false;
+        _awaitingSeekPreview = false;
+        _gateTimeoutRetries = 0;
+        if (_floorWaitStarted.time_since_epoch().count() != 0)
+        {
+            seeklog::stage("player.floor.ready",
+                           seeklog::msSince(_floorWaitStarted));
+            _floorWaitStarted = {};
+        }
+        if (_buffering)
+        {
+            _buffering = false;
+            notifyBufferingChanged(false);
+        }
+    };
+
+    // Discard a staged frame from an older seek generation.
+    if (_held && !isCurrentGen(*_held))
+    {
+        _held.reset();
+    }
+    // Accept frames within one frame of the floor — scrub ceiling used
+    // `pts > target` while the gate required `pts >= target`, so with no
+    // exact-pts hit the queue never held a presentable frame.
+    constexpr std::int64_t kFloorSlackUs = 80'000;
+    const std::int64_t acceptFloorUs =
+        (_minPresentPts.toUs() > kFloorSlackUs)
+            ? (_minPresentPts.toUs() - kFloorSlackUs)
+            : 0;
+
+    if (_held && _held->frame.pts.toUs() < acceptFloorUs)
+    {
+        _held.reset();
+    }
+
+    // Drain the whole below-floor / stale-serial prefix in one call.
     while (!_held)
     {
         QueuedFrame qf;
@@ -375,57 +470,179 @@ bool AYVideoPlayer::tryReleaseClockGate() noexcept
         {
             break;
         }
-        if (qf.frame.pts < _minPresentPts)
-        {
-            continue;
-        }
-        // Reject frames from a previous seek generation (stale high-pts
-        // pictures that survived postSeekMin).
-        if (_awaitingSeekPreview
-            && qf.seekSerial < _awaitingSeekSerial)
+        if (!isCurrentGen(qf) || qf.frame.pts.toUs() < acceptFloorUs)
         {
             continue;
         }
         _held = std::make_unique<QueuedFrame>(std::move(qf));
     }
-    while (_held && _held->frame.pts < _minPresentPts)
+
+    if (_held)
     {
-        _held.reset();
-        QueuedFrame qf;
-        if (_queue->tryPop(qf))
-        {
-            if (qf.frame.pts >= _minPresentPts)
-            {
-                _held = std::make_unique<QueuedFrame>(std::move(qf));
-            }
-        }
-        else
-        {
-            break;
-        }
+        acceptHeld();
+        return true;
     }
-    if (!_held)
+
+    // Watchdog: accept a current-generation frame near the floor. After a
+    // couple of empty windows, snap to the closest current-gen frame so we
+    // never retry forever (scrub ceiling vs gate floor left the queue with
+    // only pts < target while pts > target were never enqueued).
+    constexpr double kGateTimeoutMs = 1500.0;
+    if (_floorWaitStarted.time_since_epoch().count() == 0
+        || seeklog::msSince(_floorWaitStarted) < kGateTimeoutMs)
     {
         return false;
     }
 
-    // Anchor to the first presentable frame's pts so playback starts
-    // in sync (no cold wall-clock run while picture was frozen).
-    _clock.reset(_held->frame.pts);
-    _clock.markResumed();
-    _clockGated = false;
-    if (_floorWaitStarted.time_since_epoch().count() != 0)
+    const std::int64_t floorUs = _minPresentPts.toUs();
+    constexpr std::int64_t kMaxLeadUs = 1'000'000;
+    QueuedFrame qf;
+    QueuedFrame bestNear;
+    QueuedFrame bestAny;
+    bool gotNear = false;
+    bool gotAny = false;
+    std::int64_t bestNearScore = std::numeric_limits<std::int64_t>::max();
+    std::int64_t bestAnyDelta = std::numeric_limits<std::int64_t>::max();
+    while (_queue->tryPop(qf))
     {
-        seeklog::stage("player.floor.ready",
-                       seeklog::msSince(_floorWaitStarted));
-        _floorWaitStarted = {};
+        if (!isCurrentGen(qf))
+        {
+            continue;
+        }
+        const std::int64_t pts = qf.frame.pts.toUs();
+        if (pts >= acceptFloorUs && pts <= floorUs + kMaxLeadUs)
+        {
+            const std::int64_t score =
+                (pts >= floorUs) ? (pts - floorUs) : (floorUs - pts);
+            if (score < bestNearScore)
+            {
+                bestNear = std::move(qf);
+                bestNearScore = score;
+                gotNear = true;
+            }
+        }
+        else
+        {
+            const std::int64_t delta =
+                (pts >= floorUs) ? (pts - floorUs) : (floorUs - pts);
+            if (delta < bestAnyDelta)
+            {
+                bestAny = std::move(qf);
+                bestAnyDelta = delta;
+                gotAny = true;
+            }
+        }
     }
-    if (_buffering)
+
+    ++_gateTimeoutRetries;
+    // Wake any scrub ceiling pause so decode can enqueue toward the floor.
+    if (_loop
+        && (_loop->scrubPausedAtCeiling() || _loop->scrubActive()
+            || _loop->intent() == PlaybackIntent::ScrubPreview))
     {
-        _buffering = false;
-        notifyBufferingChanged(false);
+        _loop->setIntent(PlaybackIntent::CatchUpToFloor);
+        if (floorUs > 0)
+        {
+            _loop->armDropBelow(_minPresentPts);
+        }
+        std::fprintf(stderr,
+                     "[AYVideo][seek] player.gate.timeout wakeScrub "
+                     "floor=%.3fs retries=%u\n",
+                     floorUs / 1e6, _gateTimeoutRetries);
+        std::fflush(stderr);
     }
-    return true;
+    if (gotNear)
+    {
+        _held = std::make_unique<QueuedFrame>(std::move(bestNear));
+        std::fprintf(stderr,
+                     "[AYVideo][seek] player.gate.timeout force pts=%.3fs "
+                     "floor=%.3fs\n",
+                     _held->frame.pts.toUs() / 1e6, floorUs / 1e6);
+        std::fflush(stderr);
+        _gateTimeoutRetries = 0;
+        acceptHeld();
+        if (_loop)
+        {
+            _loop->setIntent(PlaybackIntent::Playing);
+        }
+        return true;
+    }
+    if (gotAny && _gateTimeoutRetries >= 2)
+    {
+        _held = std::make_unique<QueuedFrame>(std::move(bestAny));
+        _minPresentPts = _held->frame.pts;
+        std::fprintf(stderr,
+                     "[AYVideo][seek] player.gate.timeout snap pts=%.3fs "
+                     "(was floor=%.3fs retries=%u)\n",
+                     _held->frame.pts.toUs() / 1e6, floorUs / 1e6,
+                     _gateTimeoutRetries);
+        std::fflush(stderr);
+        _gateTimeoutRetries = 0;
+        acceptHeld();
+        if (_loop)
+        {
+            _loop->setIntent(PlaybackIntent::Playing);
+        }
+        return true;
+    }
+    // Bounded: after several empty windows, snap clock to land pts and
+    // release so we never spin forever with gotAny=0.
+    constexpr uint32_t kMaxEmptyRetries = 4;
+    if (_gateTimeoutRetries >= kMaxEmptyRetries && _loop)
+    {
+        const std::int64_t postMin = _loop->postSeekMinPtsUs();
+        const std::int64_t land =
+            (postMin > 0 && postMin != std::numeric_limits<std::int64_t>::max())
+                ? postMin
+                : _loop->scrubLastOutPtsUs();
+        if (land > 0)
+        {
+            _minPresentPts = ayt::time::Duration::fromUs(land);
+            _loop->armDropBelow({});
+            _loop->setIntent(PlaybackIntent::Playing);
+            _audioMasterBaseUs = land;
+            _clock.reset(_minPresentPts);
+            _clock.markResumed();
+            _clockGated = false;
+            _gateTimeoutRetries = 0;
+            _floorWaitStarted = {};
+            if (_buffering)
+            {
+                _buffering = false;
+                notifyBufferingChanged(false);
+            }
+            std::fprintf(stderr,
+                         "[AYVideo][seek] player.gate.timeout boundSnap "
+                         "%.3fs → %.3fs\n",
+                         floorUs / 1e6, land / 1e6);
+            std::fflush(stderr);
+            return true;
+        }
+        if (floorUs > 0 && postMin > 0
+            && postMin != std::numeric_limits<std::int64_t>::max()
+            && postMin < floorUs)
+        {
+            _minPresentPts = ayt::time::Duration::fromUs(postMin);
+            _loop->armDropBelow(_minPresentPts);
+            _audioMasterBaseUs = postMin;
+            _clock.reset(_minPresentPts);
+            std::fprintf(stderr,
+                         "[AYVideo][seek] player.gate.timeout lowerFloor "
+                         "%.3fs → %.3fs\n",
+                         floorUs / 1e6, postMin / 1e6);
+            std::fflush(stderr);
+        }
+        _gateTimeoutRetries = 0;
+    }
+
+    _floorWaitStarted = std::chrono::steady_clock::now();
+    std::fprintf(stderr,
+                 "[AYVideo][seek] player.gate.timeout retry floor=%.3fs "
+                 "(retries=%u gotAny=%d)\n",
+                 _minPresentPts.toUs() / 1e6, _gateTimeoutRetries,
+                 gotAny ? 1 : 0);
+    std::fflush(stderr);
+    return false;
 }
 
 bool AYVideoPlayer::primeFirstFrame(bool anyKeyframe) noexcept
@@ -577,6 +794,8 @@ VideoResult AYVideoPlayer::attachAudioEngine(ayt::audio::AudioEngine* engine) no
     if (_audioEngine)
     {
         _clock.setAudioMasterProvider(&AYVideoPlayer::audioMasterThunk, this);
+        // Keep engine scale aligned with any rate set before attach.
+        _audioEngine->setTimeScale(static_cast<float>(_rate));
     }
     else
     {
@@ -590,10 +809,18 @@ VideoResult AYVideoPlayer::attachAudioEngine(ayt::audio::AudioEngine* engine) no
 ayt::time::Duration AYVideoPlayer::audioMasterThunk(void* user) noexcept
 {
     auto* self = static_cast<AYVideoPlayer*>(user);
-    if (!self || !self->_audioEngine || self->_audioVoice == 0
-        || self->_audioStreamId == 0)
+    if (!self)
     {
         return {};
+    }
+    const ayt::time::Duration base =
+        ayt::time::Duration::fromUs(self->_audioMasterBaseUs);
+    if (!self->_audioEngine || self->_audioVoice == 0
+        || self->_audioStreamId == 0)
+    {
+        // Bridge torn down (scrub/seek) — keep the seek origin so
+        // markPaused/position do not snap to 0 under AudioMaster.
+        return base;
     }
     const uint64_t frames = self->_audioEngine->voicePositionFrames(
         self->_audioVoice);
@@ -602,7 +829,7 @@ ayt::time::Duration AYVideoPlayer::audioMasterThunk(void* user) noexcept
     const uint32_t rate = desc.sampleRate > 0 ? desc.sampleRate : 48000u;
     const double us = static_cast<double>(frames) * 1'000'000.0
                       / static_cast<double>(rate);
-    return ayt::time::Duration::fromUs(static_cast<std::int64_t>(us));
+    return base + ayt::time::Duration::fromUs(static_cast<std::int64_t>(us));
 }
 
 VideoResult AYVideoPlayer::transition(PlayerState from, PlayerState to) noexcept
@@ -650,7 +877,8 @@ bool AYVideoPlayer::ensureAudioBridge() noexcept
     }
     if (_audioStreamId != 0 && _audioVoice != 0)
     {
-        (void)_clock.setSource(SyncSource::AudioMaster);
+        // Keep whatever sync source the player already chose; cold start
+        // stays on EngineClock until audio actually renders (see pullFrame).
         return true;
     }
     teardownAudioBridge();
@@ -675,7 +903,9 @@ bool AYVideoPlayer::ensureAudioBridge() noexcept
     }
     _audioVoice = voice;
     _clock.setAudioMasterProvider(&AYVideoPlayer::audioMasterThunk, this);
-    (void)_clock.setSource(SyncSource::AudioMaster);
+    // Do NOT flip to AudioMaster yet — an empty stream reports t=0 and
+    // freezes presentDueFrame. pullFrame promotes once voice moves.
+    (void)_clock.setSource(SyncSource::EngineClock);
     return true;
 }
 
@@ -685,10 +915,20 @@ void AYVideoPlayer::pumpAudioToEngine() noexcept
     {
         return;
     }
+    // After seek/scrub the demux lands on a prior I-frame; video drops
+    // until `_minPresentPts` / AudioMaster base. Mirror that for PCM so
+    // we do not push pre-target audio into the live stream ring.
+    const std::int64_t floorUs =
+        (_audioMasterBaseUs > _minPresentPts.toUs()) ? _audioMasterBaseUs
+                                                     : _minPresentPts.toUs();
     QueuedAudio qa;
     while (_audioQueue->tryPop(qa))
     {
         if (!qa.frame.data || qa.frame.frameCount == 0)
+        {
+            continue;
+        }
+        if (floorUs > 0 && qa.frame.pts.toUs() < floorUs)
         {
             continue;
         }
@@ -720,8 +960,11 @@ bool AYVideoPlayer::presentDueFrame(VideoFrame& out)
         return pts <= pos;
     };
 
-    // Drop late / pre-seek frames (audio-master drift §9.2 + V4 floor).
-    while (_held && shouldDrop(_held->frame.pts))
+    // Drop late / pre-seek / wrong-generation frames.
+    while (_held
+           && (shouldDrop(_held->frame.pts)
+               || (_awaitingSeekSerial > 0
+                   && _held->seekSerial < _awaitingSeekSerial)))
     {
         _held.reset();
         QueuedFrame qf;
@@ -742,6 +985,23 @@ bool AYVideoPlayer::presentDueFrame(VideoFrame& out)
             _presented = std::move(_held);
             out = _presented->frame;
             out.data = _presented->pixels.data();
+            // Catch-up complete — stop dropping by seek floor / serial so
+            // steady playback is not starved after the first present.
+            if (_minPresentPts.toUs() > 0
+                && _presented->frame.pts >= _minPresentPts)
+            {
+                _minPresentPts = {};
+                if (_loop
+                    && _loop->intent() == PlaybackIntent::CatchUpToFloor)
+                {
+                    _loop->setIntent(PlaybackIntent::Playing);
+                }
+            }
+            if (_awaitingSeekSerial > 0
+                && _presented->seekSerial >= _awaitingSeekSerial)
+            {
+                _awaitingSeekSerial = 0;
+            }
             return true;
         }
         return false; // early — wait
@@ -781,7 +1041,8 @@ void AYVideoPlayer::startLoop()
     DecodeLoopOptions opts;
     opts.reconnectMax = _demuxParams.reconnectMax;
     opts.reconnectDelayMs = _demuxParams.reconnectDelayMs;
-    _loop = std::make_unique<DecodeLoop>(*_demuxer, *_decoder, *_queue, aq, opts);
+    _loop = std::make_unique<DecodeLoop>(*_demuxer, *_decoder, *_queue, aq, opts,
+                                         _subtitleCueQueue.get());
     _loop->start();
     if (_held)
     {
@@ -853,7 +1114,24 @@ VideoResult AYVideoPlayer::open(const std::string& path)
 
     DemuxerOpenParams params;
     params.path = path;
-    if (isHttpUrl(path))
+    params.preferredBandwidthBps = _preferredBandwidthBps;
+    if (isRtspUrl(path))
+    {
+        // Live RTSP: non-seekable; DecodeLoop reconnect on demux errors.
+        params.seekable = false;
+        params.reconnectMax = 3;
+        params.reconnectDelayMs = 50; // keep Mock inject tests snappy
+        params.rtspPreferTcp = true;
+    }
+    else if (isHlsUrl(path))
+    {
+        // HLS VOD is usually seekable; live playlists may still reject
+        // seek at the demuxer. ABR ceiling comes from preferredBandwidth.
+        params.seekable = true;
+        params.reconnectMax = 3;
+        params.reconnectDelayMs = 50;
+    }
+    else if (isHttpUrl(path))
     {
         // V5 HTTP(S) progressive: enable seek when the server supports
         // Range (most static file servers do). DecodeLoop reconnect stays on.
@@ -868,7 +1146,7 @@ VideoResult AYVideoPlayer::open(const std::string& path)
         return r;
     }
     _demuxParams = params;
-    _networkStreaming = isHttpUrl(path) || params.reconnectMax > 0;
+    _networkStreaming = isNetworkUrl(path) || params.reconnectMax > 0;
     setBuffering(false);
     if (auto r = _demuxer->getMediaInfo(_info); r != VideoResult::Ok)
     {
@@ -881,6 +1159,8 @@ VideoResult AYVideoPlayer::open(const std::string& path)
     decoderParams.codecName = _info.videoCodec;
     decoderParams.media = _info;
     decoderParams.decodeAudio = (_audioEngine != nullptr) && _info.hasAudio;
+    decoderParams.preferredAccel = _preferredDecodeAccel;
+    decoderParams.allowSoftwareFallback = true;
     if (auto r = _decoder->open(decoderParams); r != VideoResult::Ok)
     {
         _lastResult = r;
@@ -901,6 +1181,15 @@ VideoResult AYVideoPlayer::open(const std::string& path)
     _presented.reset();
     _minPresentPts = {};
     _activeSubtitleTrack = -1;
+    _subtitleCues.clear();
+    if (!_subtitleCueQueue)
+    {
+        _subtitleCueQueue = std::make_unique<SubtitleCueQueue>();
+    }
+    else
+    {
+        _subtitleCueQueue->clear();
+    }
     _activeVideoTrack = _info.videoTracks.empty() ? -1 : 0;
     _activeAudioTrack = _info.audioTracks.empty() ? -1 : 0;
     _lastResult = VideoResult::Ok;
@@ -941,6 +1230,7 @@ VideoResult AYVideoPlayer::play()
         }
         _minPresentPts = {};
         _pipelinePrimed = false;
+        _audioMasterBaseUs = 0;
         _clock.reset(ayt::time::Duration{});
         (void)applyActiveTracks();
         (void)ensureAudioBridge();
@@ -1017,71 +1307,272 @@ VideoResult AYVideoPlayer::play()
         }
         else
         {
-            if (_loop)
+            // Scrub commit vs normal/Accurate resume share the paused+loop
+            // path — only ScrubPreview gets the wide near-floor keep window.
+            const bool fromScrub =
+                _awaitingSeekScrub
+                || (_loop
+                    && (_loop->intent() == PlaybackIntent::ScrubPreview
+                        || _loop->scrubActive()));
+
+            if (fromScrub)
             {
-                _loop->endScrubMode();
-            }
-            _awaitingSeekScrub = false;
-            // Keep the scrub-target clock. Never re-anchor to a prior
-            // Keyframe/Scrub picture (held.pts << clock) — that snapped
-            // playback back to t≈0 after scrub-to-mid-GOP + resume.
-            if (_awaitingSeekPreview)
-            {
-                armClockGate();
-            }
-            else if (_held && _held->frame.pts >= _minPresentPts)
-            {
-                _clock.reset(_held->frame.pts);
-                _clock.markResumed();
-                _clockGated = false;
-            }
-            else if (_minPresentPts.toUs() > 0)
-            {
-                _clock.reset(_minPresentPts);
-                if (_held
-                    && _held->frame.pts.toUs() + 80'000 < _minPresentPts.toUs()
-                    && _loop && !_loop->finished())
+                // commitPlayFromScrub: intent first so in-flight Scrub apply
+                // cannot re-arm ceiling pause after we leave scrub.
+                if (_loop)
                 {
-                    // Bitstream is still at the prior I-frame; drop
-                    // keyframe→scrub-target at decode speed.
-                    _loop->armDropBelow(_minPresentPts);
-                    _presented = std::move(_held);
-                    _held.reset();
-                    if (_queue)
+                    _loop->setIntent(PlaybackIntent::CatchUpToFloor);
+                }
+                _awaitingSeekScrub = false;
+                _awaitingSeekPreview = false;
+                _audioMasterBaseUs = _clock.position().toUs();
+
+                constexpr std::int64_t kNearFloorUs = 500'000; // 0.5 s
+                const uint64_t needSerial = _awaitingSeekSerial;
+                auto isCurrentGen = [&](const QueuedFrame& qf) {
+                    return needSerial == 0 || qf.seekSerial >= needSerial;
+                };
+
+                if (_minPresentPts.toUs() <= 0)
+                {
+                    _minPresentPts = _clock.position();
+                }
+                const std::int64_t floorUs = _minPresentPts.toUs();
+
+                // Keep best near-floor current-gen frame. Never drain-discard
+                // KF→thumb progress under an empty gated queue.
+                auto consider = [&](QueuedFrame&& qf) {
+                    if (!isCurrentGen(qf))
                     {
-                        QueuedFrame junk;
-                        while (_queue->tryPop(junk))
+                        return;
+                    }
+                    const std::int64_t pts = qf.frame.pts.toUs();
+                    const bool inWindow =
+                        pts + kNearFloorUs >= floorUs
+                        && pts <= floorUs + kNearFloorUs;
+                    if (!inWindow && _held)
+                    {
+                        const std::int64_t heldPts = _held->frame.pts.toUs();
+                        const std::int64_t dNew =
+                            (pts >= floorUs) ? (pts - floorUs) : (floorUs - pts);
+                        const std::int64_t dOld =
+                            (heldPts >= floorUs) ? (heldPts - floorUs)
+                                                : (floorUs - heldPts);
+                        if (dNew >= dOld)
                         {
-                            if (junk.frame.pts >= _minPresentPts
-                                && junk.seekSerial >= _awaitingSeekSerial)
-                            {
-                                _held =
-                                    std::make_unique<QueuedFrame>(std::move(junk));
-                                break;
-                            }
+                            return;
                         }
                     }
-                    std::fprintf(stderr,
-                                 "[AYVideo][seek] play.catchUp from KF "
-                                 "floor=%.3fs\n",
-                                 _minPresentPts.toUs() / 1e6);
-                    std::fflush(stderr);
+                    else if (!inWindow && !_held)
+                    {
+                        if (pts > floorUs + kNearFloorUs)
+                        {
+                            return;
+                        }
+                    }
+                    if (_held && isCurrentGen(*_held))
+                    {
+                        const std::int64_t heldPts = _held->frame.pts.toUs();
+                        const bool heldIn =
+                            heldPts + kNearFloorUs >= floorUs
+                            && heldPts <= floorUs + kNearFloorUs;
+                        if (heldIn && !inWindow)
+                        {
+                            return;
+                        }
+                        if (heldIn == inWindow && heldPts >= pts)
+                        {
+                            return;
+                        }
+                    }
+                    if (_held)
+                    {
+                        _presented = std::move(_held);
+                    }
+                    _held = std::make_unique<QueuedFrame>(std::move(qf));
+                };
+
+                if (_held)
+                {
+                    QueuedFrame cur = std::move(*_held);
+                    _held.reset();
+                    consider(std::move(cur));
                 }
-                armClockGate();
-            }
-            else if (_held)
-            {
-                _clock.reset(_held->frame.pts);
-                _clock.markResumed();
-                _clockGated = false;
+                if (_queue)
+                {
+                    QueuedFrame qf;
+                    while (_queue->tryPop(qf))
+                    {
+                        consider(std::move(qf));
+                    }
+                }
+
+                const bool heldUsable =
+                    _held && isCurrentGen(*_held)
+                    && _held->frame.pts.toUs() + kNearFloorUs >= floorUs
+                    && _held->frame.pts.toUs() <= floorUs + kNearFloorUs;
+
+                if (heldUsable)
+                {
+                    if (_held->frame.pts < _minPresentPts)
+                    {
+                        _minPresentPts = _held->frame.pts;
+                    }
+                    _clock.reset(_held->frame.pts);
+                    _audioMasterBaseUs = _held->frame.pts.toUs();
+                    _clock.markResumed();
+                    _clockGated = false;
+                    _floorWaitStarted = {};
+                    _gateTimeoutRetries = 0;
+                    if (_buffering)
+                    {
+                        _buffering = false;
+                        notifyBufferingChanged(false);
+                    }
+                    if (_loop)
+                    {
+                        _loop->setIntent(PlaybackIntent::Playing);
+                    }
+                }
+                else if (floorUs > 0 && _loop && !_loop->finished())
+                {
+                    _clock.reset(_minPresentPts);
+                    _audioMasterBaseUs = floorUs;
+                    _loop->armDropBelow(_minPresentPts);
+                    std::fprintf(stderr,
+                                 "[AYVideo][seek] play.catchUp intent=CatchUp "
+                                 "floor=%.3fs keptQueue=1\n",
+                                 floorUs / 1e6);
+                    std::fflush(stderr);
+                    armClockGate();
+                }
+                else if (_held)
+                {
+                    _clock.reset(_held->frame.pts);
+                    _audioMasterBaseUs = _held->frame.pts.toUs();
+                    _clock.markResumed();
+                    _clockGated = false;
+                    if (_loop)
+                    {
+                        _loop->setIntent(PlaybackIntent::Playing);
+                    }
+                }
+                else
+                {
+                    _clock.markResumed();
+                    if (_loop)
+                    {
+                        _loop->setIntent(PlaybackIntent::Playing);
+                    }
+                }
             }
             else
             {
-                _clock.markResumed();
+                // Accurate seek resume / plain pause→play: honor the floor;
+                // do not widen to scrub ±0.5s.
+                if (_loop)
+                {
+                    if (_minPresentPts.toUs() > 0)
+                    {
+                        _loop->setIntent(PlaybackIntent::CatchUpToFloor);
+                        _loop->armDropBelow(_minPresentPts);
+                    }
+                    else
+                    {
+                        _loop->setIntent(PlaybackIntent::Playing);
+                    }
+                }
+                _awaitingSeekScrub = false;
+                _audioMasterBaseUs = _clock.position().toUs();
+
+                constexpr std::int64_t kAccSlackUs = 80'000;
+                const std::int64_t floorUs = _minPresentPts.toUs();
+                const std::int64_t acceptUs =
+                    (floorUs > kAccSlackUs) ? (floorUs - kAccSlackUs) : 0;
+                const uint64_t needSerial = _awaitingSeekSerial;
+
+                if (_held
+                    && ((needSerial > 0 && _held->seekSerial < needSerial)
+                        || _held->frame.pts.toUs() < acceptUs))
+                {
+                    _presented = std::move(_held);
+                    _held.reset();
+                }
+                if (_queue && floorUs > 0 && !_held)
+                {
+                    QueuedFrame qf;
+                    while (_queue->tryPop(qf))
+                    {
+                        if (needSerial > 0 && qf.seekSerial < needSerial)
+                        {
+                            continue;
+                        }
+                        if (qf.frame.pts.toUs() < acceptUs)
+                        {
+                            continue;
+                        }
+                        _held = std::make_unique<QueuedFrame>(std::move(qf));
+                        break;
+                    }
+                }
+
+                if (_held && _held->frame.pts.toUs() >= acceptUs)
+                {
+                    _awaitingSeekPreview = false;
+                    _clock.reset(_held->frame.pts);
+                    _audioMasterBaseUs = _held->frame.pts.toUs();
+                    _clock.markResumed();
+                    _clockGated = false;
+                    _floorWaitStarted = {};
+                    if (_buffering)
+                    {
+                        _buffering = false;
+                        notifyBufferingChanged(false);
+                    }
+                    if (_loop && _held->frame.pts.toUs() >= floorUs)
+                    {
+                        _loop->setIntent(PlaybackIntent::Playing);
+                    }
+                }
+                else if (floorUs > 0)
+                {
+                    _awaitingSeekPreview = false;
+                    _clock.reset(_minPresentPts);
+                    _audioMasterBaseUs = floorUs;
+                    armClockGate();
+                }
+                else if (_awaitingSeekPreview)
+                {
+                    armClockGate();
+                }
+                else if (_held)
+                {
+                    _awaitingSeekPreview = false;
+                    _clock.reset(_held->frame.pts);
+                    _audioMasterBaseUs = _held->frame.pts.toUs();
+                    _clock.markResumed();
+                    _clockGated = false;
+                }
+                else
+                {
+                    _awaitingSeekPreview = false;
+                    _clock.markResumed();
+                }
             }
         }
         if (_audioEngine)
         {
+            // Scrub/seek tears the PCM bridge while Demo (or host) often
+            // pause()'d the engine first. ensureAudioBridge alone left
+            // `_paused=true` → device callback rendered silence forever.
+            if (_info.hasAudio && (_audioStreamId == 0 || _audioVoice == 0))
+            {
+                if (_audioQueue)
+                {
+                    _audioQueue->clear();
+                }
+                (void)ensureAudioBridge();
+            }
             _audioEngine->resume();
         }
         transition(PlayerState::Paused, PlayerState::Playing);
@@ -1114,6 +1605,166 @@ VideoResult AYVideoPlayer::pause()
     return VideoResult::InvalidState;
 }
 
+VideoResult AYVideoPlayer::stepFrames(int delta)
+{
+    if (delta != 1 && delta != -1)
+    {
+        _lastResult = VideoResult::InvalidArgument;
+        return VideoResult::InvalidArgument;
+    }
+    if (_state == PlayerState::Playing)
+    {
+        const VideoResult pr = pause();
+        if (pr != VideoResult::Ok)
+        {
+            return pr;
+        }
+    }
+    if (_state != PlayerState::Paused && _state != PlayerState::Ready)
+    {
+        _lastResult = VideoResult::InvalidState;
+        return VideoResult::InvalidState;
+    }
+    if (_state == PlayerState::Ready)
+    {
+        // Editor convenience: Ready counts as paused-at-open.
+        _state = PlayerState::Paused;
+        notifyStateChanged(PlayerState::Paused);
+    }
+
+    const double fps = (_info.frameRate > 1.0) ? _info.frameRate : 25.0;
+    const std::int64_t frameUs =
+        static_cast<std::int64_t>(1'000'000.0 / fps + 0.5);
+    const ayt::time::Duration anchor =
+        (_held && _held->frame.data) ? _held->frame.pts
+        : (_presented && _presented->frame.data) ? _presented->frame.pts
+                                                 : _clock.position();
+
+    auto commitStepPicture = [&](QueuedFrame&& qf) {
+        freezeClockAt(qf.frame.pts);
+        _audioMasterBaseUs = qf.frame.pts.toUs();
+        _minPresentPts = {};
+        _clockGated = false;
+        _awaitingSeekPreview = false;
+        _presented = std::make_unique<QueuedFrame>(std::move(qf));
+        _held.reset();
+        _lastResult = VideoResult::Ok;
+    };
+
+    if (delta > 0)
+    {
+        // Prefer the next queued frame after the anchor (decode keeps
+        // running under Block backpressure while Paused).
+        const uint64_t needSerial = _awaitingSeekSerial;
+        QueuedFrame best;
+        bool got = false;
+        if (_queue)
+        {
+            QueuedFrame qf;
+            while (_queue->tryPop(qf))
+            {
+                if (needSerial > 0 && qf.seekSerial < needSerial)
+                {
+                    continue;
+                }
+                if (qf.frame.pts.toUs() <= anchor.toUs())
+                {
+                    continue;
+                }
+                if (!got || qf.frame.pts < best.frame.pts)
+                {
+                    best = std::move(qf);
+                    got = true;
+                }
+            }
+        }
+        if (_held && _held->frame.data
+            && _held->frame.pts.toUs() > anchor.toUs())
+        {
+            if (!got || _held->frame.pts < best.frame.pts)
+            {
+                best = std::move(*_held);
+                _held.reset();
+                got = true;
+            }
+        }
+        if (got)
+        {
+            commitStepPicture(std::move(best));
+            return VideoResult::Ok;
+        }
+
+        // Queue empty — Accurate seek one frame ahead.
+        ayt::time::Duration target =
+            ayt::time::Duration::fromUs(anchor.toUs() + frameUs);
+        const ayt::time::Duration dur = mediaDuration();
+        if (dur.toUs() > 0 && target > dur)
+        {
+            _lastResult = VideoResult::EndOfStream;
+            return VideoResult::EndOfStream;
+        }
+        const VideoResult sr = seek(target, SeekMode::Accurate);
+        if (sr != VideoResult::Ok)
+        {
+            return sr;
+        }
+        for (int i = 0; i < 2000; ++i)
+        {
+            pollSeekPreview();
+            if (_held && _held->frame.data)
+            {
+                commitStepPicture(std::move(*_held));
+                _held.reset();
+                if (_state != PlayerState::Paused)
+                {
+                    _state = PlayerState::Paused;
+                    notifyStateChanged(PlayerState::Paused);
+                }
+                return VideoResult::Ok;
+            }
+            std::this_thread::sleep_for(std::chrono::milliseconds(1));
+        }
+        _lastResult = VideoResult::Cancelled;
+        return VideoResult::Cancelled;
+    }
+
+    // Backward: Accurate seek one frame before the anchor.
+    std::int64_t targetUs = anchor.toUs() - frameUs;
+    if (targetUs < 0)
+    {
+        targetUs = 0;
+    }
+    if (targetUs >= anchor.toUs() && anchor.toUs() <= 0)
+    {
+        _lastResult = VideoResult::Ok; // already at BOF
+        return VideoResult::Ok;
+    }
+    const VideoResult sr =
+        seek(ayt::time::Duration::fromUs(targetUs), SeekMode::Accurate);
+    if (sr != VideoResult::Ok)
+    {
+        return sr;
+    }
+    for (int i = 0; i < 2000; ++i)
+    {
+        pollSeekPreview();
+        if (_held && _held->frame.data)
+        {
+            commitStepPicture(std::move(*_held));
+            _held.reset();
+            if (_state != PlayerState::Paused)
+            {
+                _state = PlayerState::Paused;
+                notifyStateChanged(PlayerState::Paused);
+            }
+            return VideoResult::Ok;
+        }
+        std::this_thread::sleep_for(std::chrono::milliseconds(1));
+    }
+    _lastResult = VideoResult::Cancelled;
+    return VideoResult::Cancelled;
+}
+
 VideoResult AYVideoPlayer::stop()
 {
     const bool recoverable =
@@ -1128,6 +1779,14 @@ VideoResult AYVideoPlayer::stop()
 
     teardownPipeline();
     teardownAudioBridge();
+    if (_audioEngine)
+    {
+        // Media switch / stop must not leave the device paused or holding
+        // a drained stream voice from the previous file (corrupt A/V on
+        // the next open+play).
+        _audioEngine->stopAll();
+        _audioEngine->resume();
+    }
     if (_demuxer)
     {
         _demuxer->close();
@@ -1139,12 +1798,24 @@ VideoResult AYVideoPlayer::stop()
     _info = MediaInfo{};
     _path.clear();
     _minPresentPts = {};
+    _audioMasterBaseUs = 0;
+    _awaitingSeekSerial = 0;
+    _awaitingSeekPreview = false;
+    _awaitingSeekScrub = false;
+    _gateTimeoutRetries = 0;
+    _floorWaitStarted = {};
     _activeSubtitleTrack = -1;
+    _subtitleCues.clear();
+    if (_subtitleCueQueue)
+    {
+        _subtitleCueQueue->clear();
+    }
     _activeVideoTrack = 0;
     _activeAudioTrack = 0;
     _demuxParams = {};
     _networkStreaming = false;
     setBuffering(false);
+    (void)_clock.setSource(SyncSource::EngineClock);
     // reset() alone leaves the clock running — freeze at 0 so Stopped
     // position stays put (demo scrubber / position() queries).
     freezeClockAt({});
@@ -1623,6 +2294,11 @@ VideoResult AYVideoPlayer::seek(const ayt::time::Duration& target,
 
     if (loopAlive)
     {
+        // AudioMaster voicePosition restarts at 0 after every bridge rebuild.
+        // Park the media origin here and drop the live voice so scrub/seek
+        // clocks use EngineClock (or base+0) instead of snapping to t=0.
+        _audioMasterBaseUs = clamped.toUs();
+        teardownAudioBridge();
         _clock.reset(clamped);
         setBuffering(false);
 
@@ -1631,6 +2307,10 @@ VideoResult AYVideoPlayer::seek(const ayt::time::Duration& target,
             _minPresentPts = clamped;
             _clock.markPaused();
             _clockGated = false;
+            if (_loop)
+            {
+                _loop->setIntent(PlaybackIntent::ScrubPreview);
+            }
             // Same GOP forward drag: only raise the decode ceiling.
             if (_loop->scrubActive() && _loop->updateScrubTarget(clamped))
             {
@@ -1700,6 +2380,7 @@ VideoResult AYVideoPlayer::seek(const ayt::time::Duration& target,
             _minPresentPts = clamped;
             if (_loop)
             {
+                _loop->setIntent(PlaybackIntent::CatchUpToFloor);
                 _loop->endScrubMode();
             }
             _awaitingSeekScrub = false;
@@ -1710,15 +2391,22 @@ VideoResult AYVideoPlayer::seek(const ayt::time::Duration& target,
                 if (preSeek == PlayerState::Playing)
                 {
                     _clock.reset(clamped);
+                    _audioMasterBaseUs = clamped.toUs();
                     if (_held && _held->frame.pts >= _minPresentPts)
                     {
                         _clock.reset(_held->frame.pts);
+                        _audioMasterBaseUs = _held->frame.pts.toUs();
                         _clock.markResumed();
                         _clockGated = false;
                     }
                     else
                     {
                         armClockGate();
+                    }
+                    (void)ensureAudioBridge();
+                    if (_audioEngine)
+                    {
+                        _audioEngine->resume();
                     }
                     transition(PlayerState::Seeking, PlayerState::Playing);
                 }
@@ -1877,6 +2565,12 @@ VideoResult AYVideoPlayer::setRate(double rate) noexcept
     }
     _rate = rate;
     (void)_clock.setRate(rate);
+    // V2 bridge: mirror playback rate onto AYAudio timeScale so PCM
+    // drain matches the presentation clock (design.md §9.3).
+    if (_audioEngine)
+    {
+        _audioEngine->setTimeScale(static_cast<float>(rate));
+    }
     _lastResult = VideoResult::Ok;
     return VideoResult::Ok;
 }
@@ -1943,6 +2637,18 @@ VideoResult AYVideoPlayer::setActiveSubtitleTrack(int32_t index) noexcept
         return VideoResult::InvalidArgument;
     }
     _activeSubtitleTrack = index;
+    _subtitleCues.clear();
+    if (_subtitleCueQueue)
+    {
+        _subtitleCueQueue->clear();
+    }
+    if (index >= 0)
+    {
+        // Seed with soft cues (Mock / sidecar); live packets append via
+        // DecodeLoop → SubtitleCueQueue.
+        _subtitleCues = _info.softSubtitleCues;
+    }
+    (void)applyActiveTracks();
     _lastResult = VideoResult::Ok;
     return VideoResult::Ok;
 }
@@ -1950,6 +2656,41 @@ VideoResult AYVideoPlayer::setActiveSubtitleTrack(int32_t index) noexcept
 int32_t AYVideoPlayer::activeSubtitleTrack() const noexcept
 {
     return _activeSubtitleTrack;
+}
+
+VideoResult AYVideoPlayer::pullActiveSubtitleCues(
+    std::vector<SubtitleCue>& out) const
+{
+    out.clear();
+    if (_state != PlayerState::Ready && _state != PlayerState::Playing
+        && _state != PlayerState::Paused && _state != PlayerState::Seeking)
+    {
+        return VideoResult::InvalidState;
+    }
+    if (_activeSubtitleTrack < 0)
+    {
+        return VideoResult::Ok;
+    }
+    // Drain packet-sourced cues into the live list (const_cast: mailbox
+    // is logically mutable diagnostic state for the presentation clock).
+    if (_subtitleCueQueue)
+    {
+        auto* self = const_cast<AYVideoPlayer*>(this);
+        self->_subtitleCueQueue->drainTo(self->_subtitleCues);
+    }
+    if (_subtitleCues.empty())
+    {
+        return VideoResult::Ok;
+    }
+    const ayt::time::Duration pos = _clock.position();
+    for (const SubtitleCue& cue : _subtitleCues)
+    {
+        if (pos >= cue.start && pos < cue.end)
+        {
+            out.push_back(cue);
+        }
+    }
+    return VideoResult::Ok;
 }
 
 uint32_t AYVideoPlayer::videoTrackCount() const noexcept
@@ -2069,6 +2810,15 @@ VideoResult AYVideoPlayer::applyActiveTracks() noexcept
     {
         return r;
     }
+    int32_t sStream = -1;
+    if (_activeSubtitleTrack >= 0
+        && _activeSubtitleTrack
+               < static_cast<int32_t>(_info.subtitleTracks.size()))
+    {
+        sStream = _info.subtitleTracks[static_cast<size_t>(_activeSubtitleTrack)]
+                      .streamIndex;
+    }
+    (void)_demuxer->setActiveSubtitleStreamIndex(sStream);
     // Refresh scalar MediaInfo from the remapped active streams.
     MediaInfo refreshed;
     if (_demuxer->getMediaInfo(refreshed) == VideoResult::Ok)
@@ -2078,6 +2828,7 @@ VideoResult AYVideoPlayer::applyActiveTracks() noexcept
         refreshed.audioTracks = _info.audioTracks;
         refreshed.subtitleTracks = _info.subtitleTracks;
         refreshed.hasSubtitles = _info.hasSubtitles;
+        refreshed.softSubtitleCues = _info.softSubtitleCues;
         _info = std::move(refreshed);
     }
     return VideoResult::Ok;
@@ -2131,6 +2882,27 @@ VideoResult AYVideoPlayer::pullFrame(VideoFrame& out)
     if (_audioEngine)
     {
         _audioEngine->submitFrame(0.0f);
+    }
+
+    // Promote EngineClock → AudioMaster once the stream has actually
+    // rendered samples. Align base so media time stays continuous.
+    if (_audioEngine && _info.hasAudio && _audioVoice != 0 && _audioStreamId != 0
+        && _clock.source() == SyncSource::EngineClock && !_clockGated)
+    {
+        const uint64_t frames = _audioEngine->voicePositionFrames(
+            static_cast<ayt::audio::VoiceHandle>(_audioVoice));
+        if (frames > 0)
+        {
+            const auto& desc = _audioEngine->streamDesc(
+                static_cast<ayt::audio::AudioStreamId>(_audioStreamId));
+            const uint32_t rate = desc.sampleRate > 0 ? desc.sampleRate : 48000u;
+            const std::int64_t voiceUs = static_cast<std::int64_t>(
+                static_cast<double>(frames) * 1'000'000.0
+                / static_cast<double>(rate));
+            const std::int64_t engUs = _clock.position().toUs();
+            _audioMasterBaseUs = engUs > voiceUs ? engUs - voiceUs : 0;
+            (void)_clock.setSource(SyncSource::AudioMaster);
+        }
     }
 
     // After seek/play start: hold the clock until the first presentable
@@ -2277,6 +3049,10 @@ AYVideoPlayer::QueueStats AYVideoPlayer::queueStats() const noexcept
         s.audioSize = _audioQueue->size();
         s.audioCapacity = _audioQueue->capacity();
         s.audioDropped = _audioQueue->dropped();
+    }
+    if (_audioEngine)
+    {
+        s.audioStreamUnderruns = _audioEngine->streamUnderrunCount();
     }
     return s;
 }

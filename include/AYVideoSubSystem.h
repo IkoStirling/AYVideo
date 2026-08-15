@@ -17,7 +17,7 @@
 #include <IAYVideoDemuxer.h>
 #include <IAYVideoFrameSink.h>
 #include <IVideoFrameTexture.h>
-#include <aytime/Duration.h>
+#include <AYTime/Duration.h>
 
 #include <AYGameLoop.h>
 

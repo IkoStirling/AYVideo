@@ -104,4 +104,36 @@ TEST_SUITE(AudioBridgeSuite)
         engine.shutdown();
     }
 
+    TEST_CASE(SetRateMirrorsAudioTimeScale) {
+        AudioEngine engine;
+        CHECK(engine.initialize(nullSettings()));
+        AYVideoPlayer player(makeFFmpegDemuxer(), makeFFmpegDecoder());
+        CHECK_INT_EQ(static_cast<int>(player.attachAudioEngine(&engine)),
+                     static_cast<int>(VideoResult::Ok));
+        CHECK_FLOAT_EQ(engine.timeScale(), 1.0f, 1e-5f);
+
+        CHECK_INT_EQ(static_cast<int>(player.setRate(1.5)),
+                     static_cast<int>(VideoResult::Ok));
+        CHECK_FLOAT_EQ(static_cast<float>(player.rate()), 1.5f, 1e-5f);
+        CHECK_FLOAT_EQ(engine.timeScale(), 1.5f, 1e-5f);
+
+        CHECK_INT_EQ(static_cast<int>(player.setRate(0.5)),
+                     static_cast<int>(VideoResult::Ok));
+        CHECK_FLOAT_EQ(engine.timeScale(), 0.5f, 1e-5f);
+
+        // Attach after rate set should pick up current rate.
+        CHECK_INT_EQ(static_cast<int>(player.attachAudioEngine(nullptr)),
+                     static_cast<int>(VideoResult::Ok));
+        engine.setTimeScale(1.0f);
+        CHECK_INT_EQ(static_cast<int>(player.setRate(2.0)),
+                     static_cast<int>(VideoResult::Ok));
+        CHECK_INT_EQ(static_cast<int>(player.attachAudioEngine(&engine)),
+                     static_cast<int>(VideoResult::Ok));
+        CHECK_FLOAT_EQ(engine.timeScale(), 2.0f, 1e-5f);
+
+        auto stats = player.queueStats();
+        CHECK_INT_EQ(static_cast<int>(stats.audioStreamUnderruns), 0);
+        engine.shutdown();
+    }
+
 TEST_SUITE_END

@@ -2,7 +2,7 @@
 //
 // Interactive (default): URL/path bar + Open / Play / Pause / Stop + scrubber.
 //   Rejects empty / unsupported schemes; open() failures stay Idle/Stopped.
-//   Prefers local AliyatRenderer assets; also accepts http(s) progressive.
+//   Prefers local AliyatRenderer assets; also accepts http(s) / HLS / RTSP.
 //
 // CI acceptance (AYVIDEO_DEMO_FRAMES=n): solid RGBA / I420 grey paths
 //   (AYVIDEO_DEMO_PATH=1|2), screenshots at frames 30/60 鈥?unchanged.
@@ -27,6 +27,7 @@
 #include "AYVideoFrame.h"
 #include "AYVideoMediaInfo.h"
 #include "AYVideoPlayer.h"
+#include "AYVideoSubtitle.h"
 #include "AYVideoSyncClock.h"
 #include "AYVideoTypes.h"
 #include "IAYVideoBackendFactory.h"
@@ -37,9 +38,9 @@
 #include <AYAudioEngine.h>
 #include <AYAudioTypes.h>
 
-#include <aymath/MathTransform.h>
-#include <aymath/MathTypes.h>
-#include <aymath/MathUtils.h>
+#include <AYMath/MathTransform.h>
+#include <AYMath/MathTypes.h>
+#include <AYMath/MathUtils.h>
 
 #include <algorithm>
 #include <cstdint>
@@ -72,9 +73,12 @@ constexpr int IDC_OPEN   = 1002;
 constexpr int IDC_PLAY   = 1003;
 constexpr int IDC_PAUSE  = 1004;
 constexpr int IDC_STOP   = 1005;
+constexpr int IDC_STEP_B = 1009;
+constexpr int IDC_STEP_F = 1010;
 constexpr int IDC_SCRUB  = 1006;
 constexpr int IDC_STATUS = 1007;
 constexpr int IDC_TIME   = 1008;
+constexpr int IDC_SUBTITLE = 1011;
 
 constexpr wchar_t kDefaultLocalW[] =
     L"D:\\Projects\\AliyatRenderer\\assets\\core\\videos\\test_video.mp4";
@@ -100,12 +104,17 @@ struct DemoState
     HWND btnPlay = nullptr;
     HWND btnPause = nullptr;
     HWND btnStop = nullptr;
+    HWND btnStepBack = nullptr;
+    HWND btnStepFwd = nullptr;
+    HWND subtitleLabel = nullptr;
 
     bool running = true;
     bool interactive = true;
     bool scrubDragging = false;
     bool scrubWasPlaying = false;
     bool sourceSeekable = true;
+    bool subtitleVisible = false;
+    std::wstring subtitleLast;
     int  scrubPreviewPos = -1;
     ULONGLONG scrubPreviewTick = 0;
     std::int64_t scrubUploadedPtsUs = std::numeric_limits<std::int64_t>::min();
@@ -290,10 +299,11 @@ bool startsWithI(const std::wstring& s, const wchar_t* prefix)
 }
 
 // Returns empty on success; otherwise a human-readable rejection reason.
+// outKind: "http" | "hls" | "rtsp" | "" (local).
 std::wstring validateSource(const std::wstring& raw, std::string& outPath,
-                            bool& outHttp)
+                            std::wstring& outKind)
 {
-    outHttp = false;
+    outKind.clear();
     outPath.clear();
     const std::wstring src = trim(raw);
     if (src.empty())
@@ -302,14 +312,19 @@ std::wstring validateSource(const std::wstring& raw, std::string& outPath,
     }
     if (startsWithI(src, L"http://") || startsWithI(src, L"https://"))
     {
-        outHttp = true;
         outPath = narrow(src);
+        outKind = ayt::video::isHlsUrl(outPath) ? L"hls" : L"http";
         return {};
     }
-    if (startsWithI(src, L"ftp://") || startsWithI(src, L"rtsp://")
-        || startsWithI(src, L"rtmp://"))
+    if (startsWithI(src, L"rtsp://") || startsWithI(src, L"rtsps://"))
     {
-        return L"Unsupported scheme (use http(s) or a local file path)";
+        outPath = narrow(src);
+        outKind = L"rtsp";
+        return {};
+    }
+    if (startsWithI(src, L"ftp://") || startsWithI(src, L"rtmp://"))
+    {
+        return L"Unsupported scheme (use http(s), rtsp, or a local file path)";
     }
     if (startsWithI(src, L"file:"))
     {
@@ -371,6 +386,56 @@ void updateScrubPreview(DemoState& state)
     SetWindowTextW(state.timeLabel,
                    (formatTime(pos) + L" / " + formatTime(dur) + L"  [seek]")
                        .c_str());
+}
+
+void updateSubtitleOverlay(DemoState& state)
+{
+    if (!state.subtitleLabel)
+    {
+        return;
+    }
+    if (!state.player)
+    {
+        if (state.subtitleVisible)
+        {
+            SetWindowTextW(state.subtitleLabel, L"");
+            ShowWindow(state.subtitleLabel, SW_HIDE);
+            state.subtitleVisible = false;
+            state.subtitleLast.clear();
+        }
+        return;
+    }
+
+    std::vector<ayt::video::SubtitleCue> cues;
+    const ayt::video::VideoResult r = state.player->pullActiveSubtitleCues(cues);
+    if (r != ayt::video::VideoResult::Ok || cues.empty())
+    {
+        if (state.subtitleVisible)
+        {
+            SetWindowTextW(state.subtitleLabel, L"");
+            ShowWindow(state.subtitleLabel, SW_HIDE);
+            state.subtitleVisible = false;
+            state.subtitleLast.clear();
+        }
+        return;
+    }
+
+    std::wstring text = widen(cues[0].text);
+    for (size_t i = 1; i < cues.size(); ++i)
+    {
+        text += L"  |  ";
+        text += widen(cues[i].text);
+    }
+    if (text != state.subtitleLast)
+    {
+        SetWindowTextW(state.subtitleLabel, text.c_str());
+        state.subtitleLast = text;
+    }
+    if (!state.subtitleVisible)
+    {
+        ShowWindow(state.subtitleLabel, SW_SHOW);
+        state.subtitleVisible = true;
+    }
 }
 
 void updateTimeLabel(DemoState& state)
@@ -457,6 +522,8 @@ void layoutUi(DemoState& state)
     };
     placeBtn(state.btnPlay);
     placeBtn(state.btnPause);
+    placeBtn(state.btnStepBack);
+    placeBtn(state.btnStepFwd);
     placeBtn(state.btnStop);
     if (state.scrub)
     {
@@ -484,6 +551,17 @@ void layoutUi(DemoState& state)
                    TRUE);
         // Keep UI above the render surface in z-order.
         SetWindowPos(state.renderHost, HWND_BOTTOM, 0, 0, 0, 0,
+                     SWP_NOMOVE | SWP_NOSIZE | SWP_NOACTIVATE);
+    }
+    // Soft-cue caption sits on top of the video (bottom band).
+    if (state.subtitleLabel)
+    {
+        constexpr int kSubH = 40;
+        const int subY =
+            kUiBand + std::max(0, state.renderH - kSubH - 12);
+        MoveWindow(state.subtitleLabel, pad * 2, subY, std::max(1, w - pad * 4),
+                   kSubH, TRUE);
+        SetWindowPos(state.subtitleLabel, HWND_TOP, 0, 0, 0, 0,
                      SWP_NOMOVE | SWP_NOSIZE | SWP_NOACTIVATE);
     }
     if (ayt::render::RendererSubSystem* rss =
@@ -547,6 +625,16 @@ void createUi(DemoState& state)
                                    reinterpret_cast<HMENU>(
                                        static_cast<INT_PTR>(IDC_PAUSE)),
                                    inst, nullptr);
+    state.btnStepBack = CreateWindowW(L"BUTTON", L"|<", btnStyle, 0, 0, 40, 24,
+                                      state.hwnd,
+                                      reinterpret_cast<HMENU>(
+                                          static_cast<INT_PTR>(IDC_STEP_B)),
+                                      inst, nullptr);
+    state.btnStepFwd = CreateWindowW(L"BUTTON", L">|", btnStyle, 0, 0, 40, 24,
+                                     state.hwnd,
+                                     reinterpret_cast<HMENU>(
+                                         static_cast<INT_PTR>(IDC_STEP_F)),
+                                     inst, nullptr);
     state.btnStop = CreateWindowW(L"BUTTON", L"Stop", btnStyle, 0, 0, 64, 24,
                                   state.hwnd,
                                   reinterpret_cast<HMENU>(
@@ -581,10 +669,18 @@ void createUi(DemoState& state)
                                       reinterpret_cast<HMENU>(
                                           static_cast<INT_PTR>(IDC_STATUS)),
                                       inst, nullptr);
+    state.subtitleLabel = CreateWindowW(
+        L"STATIC", L"",
+        WS_CHILD | SS_CENTER | SS_CENTERIMAGE | WS_CLIPSIBLINGS, 0, 0, 100, 40,
+        state.hwnd,
+        reinterpret_cast<HMENU>(static_cast<INT_PTR>(IDC_SUBTITLE)), inst,
+        nullptr);
+    ShowWindow(state.subtitleLabel, SW_HIDE);
 
     HFONT font = reinterpret_cast<HFONT>(GetStockObject(DEFAULT_GUI_FONT));
     for (HWND h : {state.urlEdit, state.btnOpen, state.btnPlay, state.btnPause,
-                    state.btnStop, state.timeLabel, state.statusLabel})
+                    state.btnStepBack, state.btnStepFwd, state.btnStop,
+                    state.timeLabel, state.statusLabel, state.subtitleLabel})
     {
         if (h)
         {
@@ -655,15 +751,20 @@ bool ensurePlayer(DemoState& state)
         {
             std::fprintf(stderr,
                          "[AYVideoDemo] AudioEngine initialize failed "
-                         "(backend=%s) — continuing video-only\n",
+                         "(requested=%s) — continuing video-only\n",
                          wantNull ? "Null" : "Miniaudio");
             state.audio.reset();
         }
         else
         {
+            const auto& bi = state.audio->backendInfo();
             std::fprintf(stderr,
-                         "[AYVideoDemo] AudioEngine ready backend=%s\n",
-                         wantNull ? "Null" : "Miniaudio");
+                         "[AYVideoDemo] AudioEngine ready backend=%s "
+                         "realDevice=%d rate=%u ch=%u\n",
+                         bi.name ? bi.name : "?",
+                         bi.realDevice ? 1 : 0,
+                         bi.sampleRate,
+                         static_cast<unsigned>(bi.channels));
         }
     }
     if (state.audio && !state.audioAttached)
@@ -689,8 +790,8 @@ void onOpen(DemoState& state)
     wchar_t buf[2048] = {};
     GetWindowTextW(state.urlEdit, buf, 2048);
     std::string path;
-    bool http = false;
-    const std::wstring err = validateSource(buf, path, http);
+    std::wstring kind;
+    const std::wstring err = validateSource(buf, path, kind);
     if (!err.empty())
     {
         setStatus(state, L"Rejected: " + err);
@@ -718,9 +819,48 @@ void onOpen(DemoState& state)
 
     state.media = {};
     (void)state.player->getMediaInfo(state.media);
-    // HTTP progressive is seekable when the server supports Range (V5).
-    state.sourceSeekable = true;
-    EnableWindow(state.scrub, TRUE);
+    // RTSP live is non-seekable; HTTP/HLS VOD keep the scrubber.
+    state.sourceSeekable = (kind != L"rtsp");
+    state.scrubDragging = false;
+    state.scrubWasPlaying = false;
+    state.scrubPreviewPos = -1;
+    state.scrubUploadedPtsUs = std::numeric_limits<std::int64_t>::min();
+    state.subtitleLast.clear();
+    state.subtitleVisible = false;
+    if (state.subtitleLabel)
+    {
+        SetWindowTextW(state.subtitleLabel, L"");
+        ShowWindow(state.subtitleLabel, SW_HIDE);
+    }
+    EnableWindow(state.scrub, state.sourceSeekable ? TRUE : FALSE);
+
+    std::wstring subNote;
+    if (state.player->subtitleTrackCount() > 0)
+    {
+        if (state.player->setActiveSubtitleTrack(0) == ayt::video::VideoResult::Ok)
+        {
+            subNote = L" +subs";
+        }
+    }
+    else
+    {
+        (void)state.player->setActiveSubtitleTrack(-1);
+    }
+
+    std::wstring netTag;
+    if (kind == L"rtsp")
+    {
+        netTag = L" (RTSP)";
+    }
+    else if (kind == L"hls")
+    {
+        netTag = L" (HLS)";
+    }
+    else if (kind == L"http")
+    {
+        netTag = L" (HTTP)";
+    }
+
     setStatus(state,
               L"Opened "
                   + widen(std::to_string(state.media.width) + "x"
@@ -729,9 +869,11 @@ void onOpen(DemoState& state)
                   + (state.media.hasAudio
                          ? L" +audio"
                          : L" (video-only)")
-                  + (http ? L" (HTTP)" : L"")
+                  + subNote
+                  + netTag
                   + (state.audioAttached ? L" [AYAudio]" : L""));
     updateTimeLabel(state);
+    updateSubtitleOverlay(state);
 }
 
 void onPlay(DemoState& state)
@@ -771,6 +913,29 @@ void onPause(DemoState& state)
     }
 }
 
+void onStep(DemoState& state, int delta)
+{
+    if (!state.player)
+    {
+        setStatus(state, L"Open a source first");
+        return;
+    }
+    const ayt::video::VideoResult r = state.player->stepFrames(delta);
+    if (r == ayt::video::VideoResult::Ok)
+    {
+        setStatus(state, delta > 0 ? L"Step +1" : L"Step -1");
+        updateTimeLabel(state);
+        updateSubtitleOverlay(state);
+        return;
+    }
+    if (r == ayt::video::VideoResult::EndOfStream)
+    {
+        setStatus(state, L"Step: end of stream");
+        return;
+    }
+    setStatus(state, L"Step failed: " + widen(ayt::video::toString(r)));
+}
+
 void onStop(DemoState& state)
 {
     if (!state.player)
@@ -783,6 +948,13 @@ void onStop(DemoState& state)
     {
         SendMessageW(state.scrub, TBM_SETPOS, TRUE, 0);
     }
+    if (state.subtitleLabel)
+    {
+        SetWindowTextW(state.subtitleLabel, L"");
+        ShowWindow(state.subtitleLabel, SW_HIDE);
+    }
+    state.subtitleVisible = false;
+    state.subtitleLast.clear();
     setStatus(state, L"Stopped");
     updateTimeLabel(state);
 }
@@ -976,8 +1148,23 @@ void uploadFrame(DemoState& state, ayt::render::Renderer& renderer,
     {
         return;
     }
-    if (state.frameTex->updateFromFrame(frame) != ayt::video::VideoResult::Ok)
+    if (frame.width <= 0 || frame.height <= 0
+        || frame.width > 8192 || frame.height > 8192)
     {
+        std::fprintf(stderr,
+                     "[AYVideoDemo] upload skip bad geometry %dx%d\n",
+                     frame.width, frame.height);
+        std::fflush(stderr);
+        return;
+    }
+    const auto ur = state.frameTex->updateFromFrame(frame);
+    if (ur != ayt::video::VideoResult::Ok)
+    {
+        std::fprintf(stderr,
+                     "[AYVideoDemo] uploadFromFrame failed: %s (%dx%d fmt=%d)\n",
+                     ayt::video::toString(ur), frame.width, frame.height,
+                     static_cast<int>(frame.format));
+        std::fflush(stderr);
         return;
     }
     bindTexture(state, renderer);
@@ -1080,6 +1267,7 @@ void tickPlayback(DemoState& state)
             }
         }
         updateTimeLabel(state);
+        updateSubtitleOverlay(state);
         return;
     }
 
@@ -1134,6 +1322,7 @@ void tickPlayback(DemoState& state)
         }
     }
     updateTimeLabel(state);
+    updateSubtitleOverlay(state);
 }
 
 void buildScene(DemoState& state, ayt::render::RenderScene& scene)
@@ -1191,6 +1380,17 @@ LRESULT CALLBACK windowProc(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lParam)
             return 1;
         }
         break;
+    case WM_CTLCOLORSTATIC:
+        if (state && state->subtitleLabel
+            && reinterpret_cast<HWND>(lParam) == state->subtitleLabel)
+        {
+            HDC hdc = reinterpret_cast<HDC>(wParam);
+            SetTextColor(hdc, RGB(245, 245, 245));
+            SetBkColor(hdc, RGB(16, 16, 16));
+            static HBRUSH s_subBrush = CreateSolidBrush(RGB(16, 16, 16));
+            return reinterpret_cast<LRESULT>(s_subBrush);
+        }
+        break;
     case WM_SIZE:
         if (state)
         {
@@ -1224,6 +1424,12 @@ LRESULT CALLBACK windowProc(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lParam)
                 return 0;
             case IDC_PAUSE:
                 onPause(*state);
+                return 0;
+            case IDC_STEP_B:
+                onStep(*state, -1);
+                return 0;
+            case IDC_STEP_F:
+                onStep(*state, 1);
                 return 0;
             case IDC_STOP:
                 onStop(*state);
@@ -1274,21 +1480,31 @@ LRESULT CALLBACK windowProc(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lParam)
                 const int previewPos = state->scrubPreviewPos;
                 std::fprintf(stderr,
                              "[AYVideoDemo][scrub] ENDTRACK pos=%d preview=%d "
-                             "hadDrag=%d resume=%d commit=Scrub\n",
-                             v, previewPos, hadDrag ? 1 : 0, resume ? 1 : 0);
+                             "hadDrag=%d resume=%d commit=%s\n",
+                             v, previewPos, hadDrag ? 1 : 0, resume ? 1 : 0,
+                             resume ? "play" : "Scrub");
                 std::fflush(stderr);
-                onScrubSeek(*state, ayt::video::AYVideoPlayer::SeekMode::Scrub,
-                            v);
-                state->scrubDragging = false;
-                state->scrubWasPlaying = false;
-                state->scrubPreviewPos = -1;
+                // Resume: play() commits CatchUp from the current scrub
+                // thumb — do NOT post a second Scrub seek (that raced
+                // catch-up and emptied the queue).
                 if (resume
                     && state->player
                     && (state->player->state() == ayt::video::PlayerState::Paused
                         || state->player->state()
                                == ayt::video::PlayerState::Ready))
                 {
+                    state->scrubDragging = false;
+                    state->scrubWasPlaying = false;
+                    state->scrubPreviewPos = -1;
                     onPlay(*state);
+                }
+                else
+                {
+                    onScrubSeek(*state,
+                               ayt::video::AYVideoPlayer::SeekMode::Scrub, v);
+                    state->scrubDragging = false;
+                    state->scrubWasPlaying = false;
+                    state->scrubPreviewPos = -1;
                 }
             }
             // Ignore TB_PAGEUP/PAGEDOWN — default click-paging is replaced

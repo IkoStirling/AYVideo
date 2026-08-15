@@ -26,6 +26,12 @@ public:
     uint32_t dequeueCount() const noexcept { return _dequeueCount; }
     uint32_t flushCount() const noexcept { return _flushCount; }
     bool wasClosed() const noexcept { return _closed; }
+    const DecoderOpenParams& lastOpenParams() const noexcept { return _params; }
+
+    VideoDecodeAccel activeDecodeAccel() const noexcept override
+    {
+        return _open ? VideoDecodeAccel::None : VideoDecodeAccel::None;
+    }
 
     // V4 soft-skip: the feed whose 0-based index equals `index` returns
     // DecodeError once, then subsequent feeds succeed.
@@ -51,6 +57,7 @@ private:
     bool _fedAny = false;
     int32_t _failFeedAt = -1;
     bool _failFeedDone = false;
+    DecoderOpenParams _params{};
 
     uint32_t _openCount = 0;
     uint32_t _feedCount = 0;

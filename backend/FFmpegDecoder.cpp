@@ -6,13 +6,14 @@ extern "C" {
 #include <libavutil/avutil.h>
 #include <libavutil/channel_layout.h>
 #include <libavutil/error.h>
+#include <libavutil/hwcontext.h>
 #include <libavutil/opt.h>
 #include <libavutil/pixfmt.h>
 #include <libavutil/samplefmt.h>
 #include <libswresample/swresample.h>
 }
 
-#include <aytime/Duration.h>
+#include <AYTime/Duration.h>
 
 #include <cmath>
 #include <cstdio>
@@ -52,6 +53,83 @@ VideoPixelFormat mapPixelFormat(AVPixelFormat fmt)
     }
 }
 
+struct AccelCandidate
+{
+    VideoDecodeAccel tag = VideoDecodeAccel::None;
+    AVHWDeviceType deviceType = AV_HWDEVICE_TYPE_NONE;
+    AVPixelFormat hwPixFmt = AV_PIX_FMT_NONE;
+};
+
+void collectAccelCandidates(VideoDecodeAccel preferred,
+                            std::vector<AccelCandidate>& out)
+{
+    out.clear();
+    auto push = [&](VideoDecodeAccel tag, AVHWDeviceType type,
+                    AVPixelFormat pix) {
+        AccelCandidate c{};
+        c.tag = tag;
+        c.deviceType = type;
+        c.hwPixFmt = pix;
+        out.push_back(c);
+    };
+
+    switch (preferred)
+    {
+    case VideoDecodeAccel::None:
+    case VideoDecodeAccel::Count:
+        break;
+    case VideoDecodeAccel::Auto:
+#if defined(_WIN32)
+        push(VideoDecodeAccel::D3D11VA, AV_HWDEVICE_TYPE_D3D11VA,
+             AV_PIX_FMT_D3D11);
+        push(VideoDecodeAccel::DXVA2, AV_HWDEVICE_TYPE_DXVA2,
+             AV_PIX_FMT_DXVA2_VLD);
+#endif
+        push(VideoDecodeAccel::CUDA, AV_HWDEVICE_TYPE_CUDA, AV_PIX_FMT_CUDA);
+        break;
+    case VideoDecodeAccel::D3D11VA:
+        push(VideoDecodeAccel::D3D11VA, AV_HWDEVICE_TYPE_D3D11VA,
+             AV_PIX_FMT_D3D11);
+        break;
+    case VideoDecodeAccel::DXVA2:
+        push(VideoDecodeAccel::DXVA2, AV_HWDEVICE_TYPE_DXVA2,
+             AV_PIX_FMT_DXVA2_VLD);
+        break;
+    case VideoDecodeAccel::CUDA:
+        push(VideoDecodeAccel::CUDA, AV_HWDEVICE_TYPE_CUDA, AV_PIX_FMT_CUDA);
+        break;
+    case VideoDecodeAccel::VideoToolbox:
+        push(VideoDecodeAccel::VideoToolbox, AV_HWDEVICE_TYPE_VIDEOTOOLBOX,
+             AV_PIX_FMT_VIDEOTOOLBOX);
+        break;
+    case VideoDecodeAccel::VAAPI:
+        push(VideoDecodeAccel::VAAPI, AV_HWDEVICE_TYPE_VAAPI,
+             AV_PIX_FMT_VAAPI);
+        break;
+    }
+}
+
+bool codecSupportsHwDevice(const AVCodec* codec, AVHWDeviceType type)
+{
+    if (!codec)
+    {
+        return false;
+    }
+    for (int i = 0;; ++i)
+    {
+        const AVCodecHWConfig* cfg = avcodec_get_hw_config(codec, i);
+        if (!cfg)
+        {
+            return false;
+        }
+        if (cfg->device_type == type
+            && (cfg->methods & AV_CODEC_HW_CONFIG_METHOD_HW_DEVICE_CTX) != 0)
+        {
+            return true;
+        }
+    }
+}
+
 } // namespace
 
 struct FFmpegDecoder::Impl
@@ -59,6 +137,7 @@ struct FFmpegDecoder::Impl
     AVCodecContext* videoCtx = nullptr;
     AVCodecContext* audioCtx = nullptr;
     AVFrame* videoFrame = nullptr;
+    AVFrame* swFrame = nullptr; // hw → CPU download target
     AVFrame* audioFrame = nullptr;
     AVPacket* packet = nullptr;
     SwrContext* swr = nullptr;
@@ -73,11 +152,37 @@ struct FFmpegDecoder::Impl
     bool audioFedAny = false;
     bool audioDrainDone = false;
 
+    VideoDecodeAccel activeAccel = VideoDecodeAccel::None;
+    AVPixelFormat hwPixFmt = AV_PIX_FMT_NONE;
+
     std::string errorString;
     DecoderOpenParams params;
     std::vector<uint8_t> packed;
     std::vector<float> pcm;
 };
+
+namespace
+{
+
+AVPixelFormat selectHwPixelFormat(AVCodecContext* ctx,
+                                  const AVPixelFormat* pixFmts)
+{
+    const auto* want = static_cast<const AVPixelFormat*>(ctx->opaque);
+    if (!want)
+    {
+        return AV_PIX_FMT_NONE;
+    }
+    for (const AVPixelFormat* p = pixFmts; *p != AV_PIX_FMT_NONE; ++p)
+    {
+        if (*p == *want)
+        {
+            return *p;
+        }
+    }
+    return AV_PIX_FMT_NONE;
+}
+
+} // namespace
 
 FFmpegDecoder::FFmpegDecoder()
     : _impl(std::make_unique<Impl>())
@@ -107,63 +212,124 @@ VideoResult FFmpegDecoder::open(const DecoderOpenParams& params)
         return VideoResult::UnsupportedFormat;
     }
 
-    AVCodecContext* ctx = avcodec_alloc_context3(codec);
-    if (!ctx)
-    {
-        return VideoResult::OutOfMemory;
-    }
-    _impl->videoCtx = ctx;
     _impl->params = params;
     _impl->decodeAudio = params.decodeAudio && params.media.hasAudio
                          && !params.media.audioCodec.empty();
+    _impl->activeAccel = VideoDecodeAccel::None;
+    _impl->hwPixFmt = AV_PIX_FMT_NONE;
 
+    AVCodecParameters* par = avcodec_parameters_alloc();
+    if (!par)
     {
-        AVCodecParameters* par = avcodec_parameters_alloc();
-        if (!par)
-        {
-            close();
-            return VideoResult::OutOfMemory;
-        }
-        par->codec_type = AVMEDIA_TYPE_VIDEO;
-        par->codec_id = codec->id;
-        par->width = params.media.width;
-        par->height = params.media.height;
-        par->format = AV_PIX_FMT_YUV420P;
-        if (!params.media.videoExtradata.empty())
-        {
-            const int size = static_cast<int>(params.media.videoExtradata.size());
-            par->extradata = static_cast<uint8_t*>(
-                av_malloc(static_cast<size_t>(size) + AV_INPUT_BUFFER_PADDING_SIZE));
-            if (!par->extradata)
-            {
-                avcodec_parameters_free(&par);
-                close();
-                return VideoResult::OutOfMemory;
-            }
-            std::memcpy(par->extradata, params.media.videoExtradata.data(),
-                        static_cast<size_t>(size));
-            std::memset(par->extradata + size, 0, AV_INPUT_BUFFER_PADDING_SIZE);
-            par->extradata_size = size;
-        }
-        if (avcodec_parameters_to_context(ctx, par) < 0)
+        return VideoResult::OutOfMemory;
+    }
+    par->codec_type = AVMEDIA_TYPE_VIDEO;
+    par->codec_id = codec->id;
+    par->width = params.media.width;
+    par->height = params.media.height;
+    par->format = AV_PIX_FMT_YUV420P;
+    if (!params.media.videoExtradata.empty())
+    {
+        const int size = static_cast<int>(params.media.videoExtradata.size());
+        par->extradata = static_cast<uint8_t*>(
+            av_malloc(static_cast<size_t>(size) + AV_INPUT_BUFFER_PADDING_SIZE));
+        if (!par->extradata)
         {
             avcodec_parameters_free(&par);
+            return VideoResult::OutOfMemory;
+        }
+        std::memcpy(par->extradata, params.media.videoExtradata.data(),
+                    static_cast<size_t>(size));
+        std::memset(par->extradata + size, 0, AV_INPUT_BUFFER_PADDING_SIZE);
+        par->extradata_size = size;
+    }
+
+    auto releaseVideoCtx = [&]() {
+        if (_impl->videoCtx)
+        {
+            avcodec_free_context(&_impl->videoCtx);
+        }
+        _impl->hwPixFmt = AV_PIX_FMT_NONE;
+        _impl->activeAccel = VideoDecodeAccel::None;
+    };
+
+    auto tryOpenVideo = [&](const AccelCandidate* hw) -> bool {
+        releaseVideoCtx();
+        AVCodecContext* ctx = avcodec_alloc_context3(codec);
+        if (!ctx)
+        {
+            return false;
+        }
+        _impl->videoCtx = ctx;
+        if (avcodec_parameters_to_context(ctx, par) < 0)
+        {
             _impl->errorString = "avcodec_parameters_to_context failed";
+            releaseVideoCtx();
+            return false;
+        }
+        ctx->thread_count = 1;
+        ctx->time_base = kUsTimeBase;
+        if (hw)
+        {
+            AVBufferRef* device = nullptr;
+            if (av_hwdevice_ctx_create(&device, hw->deviceType, nullptr,
+                                      nullptr, 0)
+                < 0)
+            {
+                releaseVideoCtx();
+                return false;
+            }
+            ctx->hw_device_ctx = device;
+            _impl->hwPixFmt = hw->hwPixFmt;
+            ctx->opaque = &_impl->hwPixFmt;
+            ctx->get_format = selectHwPixelFormat;
+        }
+        if (avcodec_open2(ctx, codec, nullptr) < 0)
+        {
+            _impl->errorString = "avcodec_open2 failed";
+            releaseVideoCtx();
+            return false;
+        }
+        ctx->time_base = kUsTimeBase;
+        _impl->activeAccel = hw ? hw->tag : VideoDecodeAccel::None;
+        return true;
+    };
+
+    std::vector<AccelCandidate> candidates;
+    collectAccelCandidates(params.preferredAccel, candidates);
+
+    bool videoOpened = false;
+    for (const AccelCandidate& c : candidates)
+    {
+        // Skip device types the codec does not advertise (e.g. mpeg4 has
+        // no D3D11VA config — open2 can still "succeed" then fail on feed).
+        if (!codecSupportsHwDevice(codec, c.deviceType))
+        {
+            continue;
+        }
+        if (tryOpenVideo(&c))
+        {
+            videoOpened = true;
+            break;
+        }
+    }
+    if (!videoOpened)
+    {
+        if (params.preferredAccel != VideoDecodeAccel::None
+            && !params.allowSoftwareFallback && !candidates.empty())
+        {
+            avcodec_parameters_free(&par);
+            close();
+            return VideoResult::UnsupportedFormat;
+        }
+        if (!tryOpenVideo(nullptr))
+        {
+            avcodec_parameters_free(&par);
             close();
             return VideoResult::DecodeError;
         }
-        avcodec_parameters_free(&par);
     }
-    ctx->thread_count = 1;
-    ctx->time_base = kUsTimeBase;
-
-    if (avcodec_open2(ctx, codec, nullptr) < 0)
-    {
-        _impl->errorString = "avcodec_open2 failed";
-        close();
-        return VideoResult::DecodeError;
-    }
-    ctx->time_base = kUsTimeBase;
+    avcodec_parameters_free(&par);
 
     if (_impl->decodeAudio)
     {
@@ -171,7 +337,8 @@ VideoResult FFmpegDecoder::open(const DecoderOpenParams& params)
             avcodec_find_decoder_by_name(params.media.audioCodec.c_str());
         if (!aCodec)
         {
-            _impl->errorString = "unknown audio codec: " + params.media.audioCodec;
+            _impl->errorString =
+                "unknown audio codec: " + params.media.audioCodec;
             close();
             return VideoResult::UnsupportedFormat;
         }
@@ -200,9 +367,11 @@ VideoResult FFmpegDecoder::open(const DecoderOpenParams& params)
         av_channel_layout_default(&apar->ch_layout, ch);
         if (!params.media.audioExtradata.empty())
         {
-            const int size = static_cast<int>(params.media.audioExtradata.size());
+            const int size =
+                static_cast<int>(params.media.audioExtradata.size());
             apar->extradata = static_cast<uint8_t*>(
-                av_malloc(static_cast<size_t>(size) + AV_INPUT_BUFFER_PADDING_SIZE));
+                av_malloc(static_cast<size_t>(size)
+                          + AV_INPUT_BUFFER_PADDING_SIZE));
             if (!apar->extradata)
             {
                 avcodec_parameters_free(&apar);
@@ -240,6 +409,15 @@ VideoResult FFmpegDecoder::open(const DecoderOpenParams& params)
         close();
         return VideoResult::OutOfMemory;
     }
+    if (_impl->activeAccel != VideoDecodeAccel::None)
+    {
+        _impl->swFrame = av_frame_alloc();
+        if (!_impl->swFrame)
+        {
+            close();
+            return VideoResult::OutOfMemory;
+        }
+    }
     if (_impl->decodeAudio)
     {
         _impl->audioFrame = av_frame_alloc();
@@ -274,6 +452,10 @@ void FFmpegDecoder::close() noexcept
     {
         av_frame_free(&_impl->videoFrame);
     }
+    if (_impl->swFrame)
+    {
+        av_frame_free(&_impl->swFrame);
+    }
     if (_impl->audioFrame)
     {
         av_frame_free(&_impl->audioFrame);
@@ -292,11 +474,18 @@ void FFmpegDecoder::close() noexcept
     _impl->pcm.shrink_to_fit();
     _impl->open = false;
     _impl->decodeAudio = false;
+    _impl->activeAccel = VideoDecodeAccel::None;
+    _impl->hwPixFmt = AV_PIX_FMT_NONE;
 }
 
 bool FFmpegDecoder::isOpen() const noexcept
 {
     return _impl->open;
+}
+
+VideoDecodeAccel FFmpegDecoder::activeDecodeAccel() const noexcept
+{
+    return _impl->open ? _impl->activeAccel : VideoDecodeAccel::None;
 }
 
 VideoResult FFmpegDecoder::feedPacket(const VideoPacket& packet)
@@ -405,7 +594,22 @@ VideoResult FFmpegDecoder::dequeueFrame(VideoFrame& outFrame)
         return VideoResult::DecodeError;
     }
 
-    const auto* f = _impl->videoFrame;
+    const AVFrame* f = _impl->videoFrame;
+    // V6: download HW surfaces to system memory so the existing CPU pack /
+    // upload path keeps working (zero-copy GPU textures = later slice).
+    if (_impl->hwPixFmt != AV_PIX_FMT_NONE
+        && f->format == _impl->hwPixFmt && _impl->swFrame)
+    {
+        av_frame_unref(_impl->swFrame);
+        if (av_hwframe_transfer_data(_impl->swFrame, _impl->videoFrame, 0) < 0)
+        {
+            _impl->errorString = "av_hwframe_transfer_data failed";
+            return VideoResult::DecodeError;
+        }
+        _impl->swFrame->pts = _impl->videoFrame->pts;
+        f = _impl->swFrame;
+    }
+
     outFrame.width = f->width;
     outFrame.height = f->height;
     outFrame.format = mapPixelFormat(static_cast<AVPixelFormat>(f->format));
@@ -414,8 +618,8 @@ VideoResult FFmpegDecoder::dequeueFrame(VideoFrame& outFrame)
     outFrame.planeOffset[0] = outFrame.planeOffset[1] =
         outFrame.planeOffset[2] = 0;
 
-    auto copyPlaneRows = [](uint8_t* dst, const uint8_t* src,
-                            int srcStride, int rows, int rowBytes) {
+    auto copyPlaneRows = [](uint8_t* dst, const uint8_t* src, int srcStride,
+                            int rows, int rowBytes) {
         for (int y = 0; y < rows; ++y)
         {
             std::memcpy(dst, src + static_cast<std::ptrdiff_t>(y) * srcStride,
@@ -437,9 +641,11 @@ VideoResult FFmpegDecoder::dequeueFrame(VideoFrame& outFrame)
         _impl->packed.resize(yBytes + uBytes + uBytes);
         uint8_t* dst = _impl->packed.data();
         dst = copyPlaneRows(dst, f->data[0], f->linesize[0], h, w);
-        outFrame.planeOffset[1] = static_cast<uint32_t>(dst - _impl->packed.data());
+        outFrame.planeOffset[1] =
+            static_cast<uint32_t>(dst - _impl->packed.data());
         dst = copyPlaneRows(dst, f->data[1], f->linesize[1], ch, cw);
-        outFrame.planeOffset[2] = static_cast<uint32_t>(dst - _impl->packed.data());
+        outFrame.planeOffset[2] =
+            static_cast<uint32_t>(dst - _impl->packed.data());
         dst = copyPlaneRows(dst, f->data[2], f->linesize[2], ch, cw);
         (void)dst;
         outFrame.stride = static_cast<uint32_t>(w);
@@ -457,7 +663,8 @@ VideoResult FFmpegDecoder::dequeueFrame(VideoFrame& outFrame)
         _impl->packed.resize(yBytes + uvBytes);
         uint8_t* dst = _impl->packed.data();
         dst = copyPlaneRows(dst, f->data[0], f->linesize[0], h, w);
-        outFrame.planeOffset[1] = static_cast<uint32_t>(dst - _impl->packed.data());
+        outFrame.planeOffset[1] =
+            static_cast<uint32_t>(dst - _impl->packed.data());
         dst = copyPlaneRows(dst, f->data[1], f->linesize[1], ch, w);
         (void)dst;
         outFrame.stride = static_cast<uint32_t>(w);
@@ -474,7 +681,8 @@ VideoResult FFmpegDecoder::dequeueFrame(VideoFrame& outFrame)
                 ? 4
                 : 1;
         const int rowBytes = w * bpp;
-        _impl->packed.resize(static_cast<size_t>(rowBytes) * static_cast<size_t>(h));
+        _impl->packed.resize(static_cast<size_t>(rowBytes)
+                             * static_cast<size_t>(h));
         copyPlaneRows(_impl->packed.data(), f->data[0], f->linesize[0], h,
                       rowBytes);
         outFrame.stride = static_cast<uint32_t>(rowBytes);
@@ -521,17 +729,15 @@ VideoResult FFmpegDecoder::dequeueAudioFrame(AudioPcmFrame& outFrame)
     }
 
     AVFrame* f = _impl->audioFrame;
-    // (Re)configure swr when input layout changes.
     AVChannelLayout outLayout{};
     av_channel_layout_default(&outLayout, kTargetChannels);
     if (!_impl->swr)
     {
-        if (swr_alloc_set_opts2(&_impl->swr,
-                               &outLayout, AV_SAMPLE_FMT_FLT, kTargetSampleRate,
-                               &f->ch_layout,
+        if (swr_alloc_set_opts2(&_impl->swr, &outLayout, AV_SAMPLE_FMT_FLT,
+                               kTargetSampleRate, &f->ch_layout,
                                static_cast<AVSampleFormat>(f->format),
-                               f->sample_rate,
-                               0, nullptr) < 0
+                               f->sample_rate, 0, nullptr)
+                < 0
             || swr_init(_impl->swr) < 0)
         {
             av_channel_layout_uninit(&outLayout);
@@ -547,11 +753,11 @@ VideoResult FFmpegDecoder::dequeueAudioFrame(AudioPcmFrame& outFrame)
         return VideoResult::Ok;
     }
     _impl->pcm.resize(static_cast<size_t>(outSamples) * kTargetChannels);
-    uint8_t* outPlanes[1] = {
-        reinterpret_cast<uint8_t*>(_impl->pcm.data())};
-    const int converted = swr_convert(_impl->swr, outPlanes, outSamples,
-                                      const_cast<const uint8_t**>(f->extended_data),
-                                      f->nb_samples);
+    uint8_t* outPlanes[1] = {reinterpret_cast<uint8_t*>(_impl->pcm.data())};
+    const int converted =
+        swr_convert(_impl->swr, outPlanes, outSamples,
+                    const_cast<const uint8_t**>(f->extended_data),
+                    f->nb_samples);
     if (converted < 0)
     {
         _impl->errorString = avErrorString(converted);

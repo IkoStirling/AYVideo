@@ -8,7 +8,7 @@
 // never copy the payload.
 
 #include <AYVideoTypes.h>
-#include <aytime/Duration.h>
+#include <AYTime/Duration.h>
 
 #include <cstdint>
 
@@ -25,11 +25,14 @@ struct VideoPacket
     const uint8_t* data = nullptr;
     uint32_t size = 0;
 
-    bool isVideo = false;          // false = audio track packet
+    bool isVideo = false;          // video elementary stream
+    bool isSubtitle = false;       // text/bitmap subtitle packet (not audio)
     int64_t streamIndex = -1;      // container stream index (diagnostic)
 
     ayt::time::Duration pts{};     // presentation timestamp
     ayt::time::Duration dts{};     // decode timestamp (dts <= pts for B-frames)
+    // Subtitle display duration when known (0 = decoder/default window).
+    ayt::time::Duration duration{};
 };
 
 // ---------------------------------------------------------------------------

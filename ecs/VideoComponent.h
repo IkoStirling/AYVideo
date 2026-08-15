@@ -9,7 +9,7 @@
 
 #include <AYVideoMediaInfo.h>
 #include <AYVideoTypes.h>
-#include <aytime/Duration.h>
+#include <AYTime/Duration.h>
 
 #include <string>
 

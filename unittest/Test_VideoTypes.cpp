@@ -81,4 +81,29 @@ TEST_SUITE(VideoTypesSuite)
         CHECK_INT_EQ(static_cast<int>(VideoPixelFormat::Count), 5);
     }
 
+    TEST_CASE(VideoDecodeAccelToStringCoversAll) {
+        const VideoDecodeAccel all[] = {
+            VideoDecodeAccel::None,
+            VideoDecodeAccel::Auto,
+            VideoDecodeAccel::D3D11VA,
+            VideoDecodeAccel::DXVA2,
+            VideoDecodeAccel::CUDA,
+            VideoDecodeAccel::VideoToolbox,
+            VideoDecodeAccel::VAAPI,
+        };
+        bool allOk = true;
+        for (auto a : all) {
+            const char* s = toString(a);
+            if (s == nullptr || s[0] == '\0') {
+                allOk = false;
+                break;
+            }
+        }
+        CHECK_TRUE(allOk);
+    }
+
+    TEST_CASE(VideoDecodeAccelCountIsSentinel) {
+        CHECK_INT_EQ(static_cast<int>(VideoDecodeAccel::Count), 7);
+    }
+
 TEST_SUITE_END

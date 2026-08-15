@@ -14,24 +14,27 @@
 // touches demuxer.seek + decoder.flush (A-07). The player clears the
 // SPSC queues (consumer side) around the request.
 //
-// Thread contract (design.md §4.4/§14): the decode thread is the ONLY
-// thread that touches the demuxer/decoder while the loop runs.
+// PlaybackIntent (player sole writer): ScrubPreview / CatchUpToFloor /
+// Playing — decode only reads it so scrub ceiling cannot race play().
 
 #include <AYVideoTypes.h>
 #include <IAYVideoDecoder.h>
 #include <IAYVideoDemuxer.h>
-#include <aytime/Duration.h>
+#include <AYTime/Duration.h>
 
 #include <atomic>
 #include <chrono>
 #include <cstdint>
+#include <optional>
 #include <thread>
+#include <vector>
 
 namespace ayt::video
 {
 
 class FrameQueue;
 class AudioQueue;
+class SubtitleCueQueue;
 
 // In-loop seek kind (mirrors AYVideoPlayer::SeekMode).
 enum class InLoopSeekMode : uint8_t
@@ -39,6 +42,14 @@ enum class InLoopSeekMode : uint8_t
     Accurate = 0, // demux KF, drop enqueue until pts >= target
     Keyframe = 1, // demux KF, enqueue first frame only (preview)
     Scrub = 2,    // demux KF, enqueue frames up to a live ceiling (WMP-like)
+};
+
+// Player-owned decode behaviour. Decode thread only loads this.
+enum class PlaybackIntent : uint8_t
+{
+    Playing = 0,       // steady playback
+    ScrubPreview = 1,  // drag: enqueue pts <= ceiling; pause past ceiling
+    CatchUpToFloor = 2 // play-after-scrub / Accurate: drop pts < floor
 };
 
 struct DecodeLoopOptions
@@ -53,11 +64,13 @@ struct DecodeLoopOptions
 class DecodeLoop
 {
 public:
-    // `audioQueue` may be null (video-only). When non-null the decoder
-    // must have been opened with decodeAudio=true.
+    // `audioQueue` / `subtitleCues` may be null. When subtitleCues is set,
+    // subtitle packets are diverted into that mailbox (never fed to the
+    // A/V decoder).
     DecodeLoop(IAYVideoDemuxer& demuxer, IAYVideoDecoder& decoder,
                FrameQueue& videoQueue, AudioQueue* audioQueue = nullptr,
-               DecodeLoopOptions options = {});
+               DecodeLoopOptions options = {},
+               SubtitleCueQueue* subtitleCues = nullptr);
     ~DecodeLoop();
 
     DecodeLoop(const DecodeLoop&) = delete;
@@ -84,9 +97,30 @@ public:
 
     void endScrubMode() noexcept;
 
+    // Player sole writer — publish intent before mutating queues / play().
+    void setIntent(PlaybackIntent intent) noexcept
+    {
+        _intent.store(static_cast<uint8_t>(intent), std::memory_order_release);
+        if (intent != PlaybackIntent::ScrubPreview)
+        {
+            endScrubMode();
+        }
+    }
+
+    PlaybackIntent intent() const noexcept
+    {
+        return static_cast<PlaybackIntent>(
+            _intent.load(std::memory_order_acquire));
+    }
+
     bool scrubActive() const noexcept
     {
         return _scrubActive.load(std::memory_order_acquire);
+    }
+
+    bool scrubPausedAtCeiling() const noexcept
+    {
+        return _scrubPausedAtCeiling.load(std::memory_order_acquire);
     }
 
     uint64_t seekSerial() const noexcept { return _seekSerial.load(); }
@@ -103,10 +137,12 @@ public:
         return _postSeekMinPtsUs.load(std::memory_order_acquire);
     }
 
-    // Arm Accurate-style catch-up without a demux re-seek. Used when
-    // Keyframe scrub left the bitstream at a prior I-frame but the clock
-    // stayed on the scrub target — play() must drop keyframe→target at
-    // decode speed (queue depth 4 would otherwise throttle to realtime).
+    std::int64_t scrubLastOutPtsUs() const noexcept
+    {
+        return _scrubLastOutPtsUs.load(std::memory_order_acquire);
+    }
+
+    // Arm Accurate-style catch-up without a demux re-seek.
     void armDropBelow(const ayt::time::Duration& floor) noexcept
     {
         const std::int64_t us = floor.toUs();
@@ -120,9 +156,7 @@ public:
     bool endedCleanly() const noexcept { return _endedClean.load(); }
     VideoResult failure() const noexcept { return _failure.load(); }
     bool finished() const noexcept { return _finished.load(); }
-    // V4 soft-skip: mid-stream DemuxError/DecodeError packets dropped.
     uint32_t skippedErrors() const noexcept { return _skippedErrors.load(); }
-    // V5: successful demuxer.reconnect() calls from this loop.
     uint32_t reconnectAttempts() const noexcept
     {
         return _reconnectAttempts.load();
@@ -130,14 +164,16 @@ public:
 
 private:
     void run() noexcept;
-    // Apply the latest pending seek on the decode thread. Returns true
-    // when a seek was performed (caller should restart the read loop).
     bool applyPendingSeek() noexcept;
+    void restoreOverflowPolicy() noexcept;
+    void armScrubPreview(int64_t targetUs) noexcept;
+    void armCatchUpOrPlaying(InLoopSeekMode mode, int64_t targetUs) noexcept;
 
     IAYVideoDemuxer& _demuxer;
     IAYVideoDecoder& _decoder;
     FrameQueue& _videoQueue;
     AudioQueue* _audioQueue = nullptr;
+    SubtitleCueQueue* _subtitleCues = nullptr;
     DecodeLoopOptions _options{};
 
     std::thread _thread;
@@ -157,31 +193,33 @@ private:
     std::atomic<int32_t> _seekVideoStream{-2};
     std::atomic<int32_t> _seekAudioStream{-2};
     std::atomic<VideoResult> _seekResult{VideoResult::Ok};
-    // After Accurate seek: decode must walk keyframe→target but must NOT
-    // enqueue those frames (queue depth 4 would otherwise throttle catch-up to
-    // ~realtime). Drop until pts >= this; 0 disables.
     std::atomic<int64_t> _dropBelowPtsUs{0};
-    // After any seek: discard decoded frames older than the first post-seek
-    // video packet (stale decoder/queue output). INT64_MAX = drop all until
-    // the first post-seek packet is seen; 0 = inactive.
     std::atomic<int64_t> _postSeekMinPtsUs{0};
-    // Scrub session: enqueue frames with pts <= ceiling; pause demux when
-    // past ceiling until updateScrubTarget raises it (or a new seek).
+
+    // Player-owned intent (decode reads only).
+    std::atomic<uint8_t> _intent{static_cast<uint8_t>(PlaybackIntent::Playing)};
+
     std::atomic<bool> _scrubActive{false};
     std::atomic<bool> _scrubPausedAtCeiling{false};
     std::atomic<int64_t> _scrubCeilingUs{0};
-    std::atomic<int64_t> _scrubLandPtsUs{0};     // first post-seek video pts
-    std::atomic<int64_t> _scrubLastOutPtsUs{0};  // last decoded video pts
-    // Decode-thread only: steady time when Accurate dropBelow was armed
-    // (for decode.floor.ready logs).
+    std::atomic<int64_t> _scrubLandPtsUs{0};
+    std::atomic<int64_t> _scrubLastOutPtsUs{0};
+
     std::chrono::steady_clock::time_point _dropBelowArmedAt{};
-    // Decode-thread only: skip redundant setActiveStreamIndices + log
-    // the first video packet pts after a seek (diagnose land position).
     int32_t _appliedVideoStream = -2;
     int32_t _appliedAudioStream = -2;
     bool _logNextVideoPts = false;
-    uint8_t _savedOverflowPolicy = 0; // FrameQueueOverflowPolicy
+    uint8_t _savedOverflowPolicy = 0;
     bool _overflowPolicySaved = false;
+
+    // Decode-thread only: first frame past scrub ceiling (not destroyed).
+    struct PendingFrame
+    {
+        VideoFrame frame;
+        std::vector<uint8_t> pixels;
+        uint64_t seekSerial = 0;
+    };
+    std::optional<PendingFrame> _pendingOverCeiling;
 };
 
 } // namespace ayt::video

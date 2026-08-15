@@ -15,7 +15,7 @@
 #include "../backend/FFmpegDemuxer.h"
 #include "../backend/FFmpegDecoder.h"
 
-#include <aytime/Duration.h>
+#include <AYTime/Duration.h>
 
 using namespace ayt::video;
 using namespace ayt::testmedia;
@@ -226,6 +226,48 @@ TEST_SUITE(FFmpegDecoderSuite)
                      static_cast<int>(VideoResult::Ok));
         CHECK_INT_EQ(static_cast<int>(dec.dequeueFrame(f)),
                      static_cast<int>(VideoResult::EndOfStream));
+    }
+
+    TEST_CASE(FFmpegDecoderAutoAccelOpensWithSoftFallback) {
+        // CI / headless: Auto may not get a HW device — must still open
+        // and decode via software (allowSoftwareFallback default).
+        GeneratedClip c = makeClip(false);
+        FedPackets fed = demuxVideoPackets(c.path);
+        FFmpegDecoder dec;
+        DecoderOpenParams params;
+        params.codecName = fed.info.videoCodec;
+        params.media = fed.info;
+        params.preferredAccel = VideoDecodeAccel::Auto;
+        params.allowSoftwareFallback = true;
+        CHECK_INT_EQ(static_cast<int>(dec.open(params)),
+                     static_cast<int>(VideoResult::Ok));
+        // Active may be HW on machines with D3D11VA; None is also OK.
+        const VideoDecodeAccel active = dec.activeDecodeAccel();
+        CHECK_TRUE(active == VideoDecodeAccel::None
+                   || active == VideoDecodeAccel::D3D11VA
+                   || active == VideoDecodeAccel::DXVA2
+                   || active == VideoDecodeAccel::CUDA);
+
+        VideoPacket p = fed.video.front();
+        CHECK_INT_EQ(static_cast<int>(dec.feedPacket(p)),
+                     static_cast<int>(VideoResult::Ok));
+        VideoFrame f;
+        // Drain until a frame or empty Ok (codec delay).
+        for (int i = 0; i < 8; ++i)
+        {
+            CHECK_INT_EQ(static_cast<int>(dec.dequeueFrame(f)),
+                         static_cast<int>(VideoResult::Ok));
+            if (f.data)
+            {
+                break;
+            }
+            if (i + 1 < static_cast<int>(fed.video.size()))
+            {
+                (void)dec.feedPacket(fed.video[static_cast<size_t>(i + 1)]);
+            }
+        }
+        CHECK_TRUE(f.data != nullptr);
+        dec.close();
     }
 
     TEST_CASE(FFmpegDecoderFlushDrainsRemaining) {

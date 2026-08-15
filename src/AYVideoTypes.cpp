@@ -39,4 +39,20 @@ const char* toString(VideoPixelFormat format) noexcept
     return "Unknown";
 }
 
+const char* toString(VideoDecodeAccel accel) noexcept
+{
+    switch (accel)
+    {
+    case VideoDecodeAccel::None:         return "None";
+    case VideoDecodeAccel::Auto:         return "Auto";
+    case VideoDecodeAccel::D3D11VA:      return "D3D11VA";
+    case VideoDecodeAccel::DXVA2:        return "DXVA2";
+    case VideoDecodeAccel::CUDA:         return "CUDA";
+    case VideoDecodeAccel::VideoToolbox: return "VideoToolbox";
+    case VideoDecodeAccel::VAAPI:        return "VAAPI";
+    case VideoDecodeAccel::Count:        return "Count";
+    }
+    return "Unknown";
+}
+
 } // namespace ayt::video
