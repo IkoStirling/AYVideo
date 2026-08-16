@@ -97,4 +97,4 @@ else()
     target_compile_options(${TEST_TARGET} PRIVATE -Wall -Wextra -Wpedantic)
 endif()
 
-add_test(NAME ${TEST_TARGET} COMMAND ${TEST_TARGET})
+ay_add_test(${TEST_TARGET})
