@@ -59,13 +59,13 @@ ctest -R AYVideo --output-on-failure
 
 ## 目录结构
 
+```text
+AYVideo/
+├── AYVideo.h                         # 模块入口
+├── interface/AYVideo/                # IVideo*.h 文件，IAYVideo* C++ 接口
+├── include/AYVideo/                  # VideoPlayer、VideoFrame、VideoSubSystem 等
+├── src/                              # Player、SyncClock、DecodeLoop、FrameQueue
+├── backend/                          # Null、Mock、FFmpeg
+├── ecs/
+└── unittest/
 ```
-include/   公共头（AY 前缀）
-interface/ 后端抽象（IAY 前缀）
-src/       实现（Player / SyncClock / DecodeLoop / FrameQueue）
-backend/   Null/Mock/FFmpeg 后端
-ecs/       VideoComponent 占位（V2+）
-unittest/  测试（一文件一 TU）
-```
-
-详见 [design.md](design.md) §14.5。
