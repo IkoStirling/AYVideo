@@ -17,6 +17,10 @@ VideoSubSystem::VideoSubSystem()
     _descriptor.basePriority = 650;
     _descriptor.timeType = ayt::game::SubSystemDescriptor::TimeType::Unscaled;
     _descriptor.dependencies = {"Audio"};
+    _descriptor.phases = ayt::game::phaseBit(ayt::game::FramePhase::Presentation);
+    _descriptor.clock = ayt::game::ClockDomain::Unscaled;
+    _descriptor.runsAfter = {"Audio"};
+    _descriptor.phasePriority = 650;
 }
 
 VideoSubSystem::~VideoSubSystem()
