@@ -1339,8 +1339,8 @@ void buildScene(DemoState& state, ayt::render::RenderScene& scene)
     const float halfW = static_cast<float>(state.renderW) * 0.5f;
     const float halfH = static_cast<float>(state.renderH) * 0.5f;
     renderer.setMainCamera(ayt::math::Float4x4::identity(),
-                           ayt::math::ortho(-halfW, halfW, -halfH, halfH,
-                                            -1.0f, 1.0f));
+                           ayt::math::lh::ortho(-halfW, halfW, -halfH, halfH,
+                                                -1.0f, 1.0f));
 
     // Fill the render-host HWND (letterboxed slightly for acceptance path).
     const float videoW = state.interactive
