@@ -4,6 +4,10 @@
 
 #include <AYAudio/AudioSubSystem.h>
 
+#include <AYGameLoop/SubSystemRegistry.h>
+
+#include <utility>
+
 namespace ayt::video
 {
 
@@ -301,6 +305,35 @@ void VideoSubSystem::update(float /*deltaTime*/)
             // Non-loop EOS: slot stays until stop(); hasFrame kept.
         }
     }
+}
+
+std::unique_ptr<VideoSubSystem> createVideoSubSystem(
+    VideoSubSystemOptions options)
+{
+    auto system = std::make_unique<VideoSubSystem>();
+    if (options.backendFactory) {
+        system->setBackendFactory(std::move(options.backendFactory));
+    }
+    system->setNowFn(options.now);
+    system->setFrameSink(options.frameSink);
+    return system;
+}
+
+VideoSubSystem* findRegisteredVideoSubSystem()
+{
+    auto* system = ayt::game::SubSystemRegistry::instance().findSubSystem(
+        "Video");
+    return dynamic_cast<VideoSubSystem*>(system);
+}
+
+bool registerVideoSubSystem(VideoSubSystemOptions options)
+{
+    if (findRegisteredVideoSubSystem() != nullptr) {
+        return true;
+    }
+    auto system = createVideoSubSystem(std::move(options));
+    ayt::game::IGameLoop::instance().registerSubSystem(system.release());
+    return findRegisteredVideoSubSystem() != nullptr;
 }
 
 } // namespace ayt::video

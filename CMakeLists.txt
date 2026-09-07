@@ -23,6 +23,7 @@ set(SRC_FILES
     src/AYVideoSyncClock.cpp         # sync clock (engine + audio-master)
     src/DecodeLoop.cpp               # dedicated decode thread (std::thread)
     src/AYVideoSubSystem.cpp         # V2+ GameLoop subsystem (§15)
+    src/AYVideoRuntimeModule.cpp     # optional AYModule startup adapter
     src/VideoColorConvert.cpp        # V3 I420/NV12 → RGBA8 (§12)
     src/AYVideoSubtitle.cpp          # V4 SubtitleKind toString
 )
@@ -98,7 +99,7 @@ target_include_directories(${MODULE_NAME} PUBLIC
 #   * AYTime     — Duration / TimePoint
 #   * AYAudio    — PCM bridge (§11)
 #   * AYGameLoop — ISubSystem for VideoSubSystem (§15)
-target_link_libraries(${MODULE_NAME} PUBLIC AYTime AYAudio AYGameLoop)
+target_link_libraries(${MODULE_NAME} PUBLIC AYTime AYAudio AYGameLoop AY::Module)
 
 # FFmpeg is a PRIVATE link (design.md §4.1): consumers of AYVideo never
 # need libav* on their link line, and the public headers stay clean.

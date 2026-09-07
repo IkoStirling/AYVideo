@@ -36,6 +36,7 @@ add_executable(${TEST_TARGET}
     Test_PlayerState.cpp         # state machine + control surface + fault injection
     Test_SyncClock.cpp           # sync clock contract (fake now provider)
     Test_VideoSubSystem.cpp      # V2+ GameLoop subsystem smoke
+    Test_VideoRuntimeModule.cpp  # AYModule assembly + compatibility path
     Test_FrameTexture.cpp        # V3 color convert + IVideoFrameTexture
     Test_ErrorRecovery.cpp       # V4 soft-skip mid-stream Demux/Decode errors
     Test_SubtitleTracks.cpp      # V4 soft-subtitle track discovery

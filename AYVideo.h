@@ -10,6 +10,7 @@
 #include "AYVideo/VideoFrame.h"      // §6.2 VideoPacket/VideoFrame carriers
 #include "AYVideo/VideoMediaInfo.h"  // §6.1 MediaInfo snapshot
 #include "AYVideo/VideoPlayer.h"     // §10 player state machine + control surface
+#include "AYVideo/VideoRuntimeModule.h" // optional AYModule startup adapter
 #include "AYVideo/VideoSubSystem.h"  // §15 GameLoop subsystem
 #include "AYVideo/VideoSyncClock.h"  // §9 A/V sync clock contract
 #include "AYVideo/VideoTypes.h"      // §5 VideoResult + VideoPixelFormat

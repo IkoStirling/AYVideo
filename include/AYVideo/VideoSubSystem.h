@@ -118,4 +118,21 @@ private:
     static VideoSubSystem* s_instance;
 };
 
+// Shared construction options used by direct compatibility registration and
+// the AYModule adapter. Non-owning pointers must outlive the subsystem.
+struct VideoSubSystemOptions
+{
+    VideoSubSystem::BackendFactory backendFactory;
+    NowFn now = nullptr;
+    IAYVideoFrameSink* frameSink = nullptr;
+};
+
+[[nodiscard]] std::unique_ptr<VideoSubSystem> createVideoSubSystem(
+    VideoSubSystemOptions options = {});
+
+// Compatibility path for applications that still assemble GameLoop directly.
+// New composition roots should add VideoRuntimeModule instead.
+bool registerVideoSubSystem(VideoSubSystemOptions options = {});
+VideoSubSystem* findRegisteredVideoSubSystem();
+
 } // namespace ayt::video

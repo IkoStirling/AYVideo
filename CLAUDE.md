@@ -60,5 +60,6 @@
 ## 引用
 
 - [design.md](design.md) — 权威设计（V0.5 ship；§3 phase roadmap + §6.4 INV + §10.3 转换表 + §14.5 layout + §17 ship checklist + §18.5 new-module rules + §19 verify）。
-- 兄弟模块设计：`d:/Projects/AYRuntime/AYVoxel/design.md`（骨架模板）、`AYAnimation/design.md`（INV + 12 段 PR 模板纪律）、`AYAudio/`（媒体库 vcpkg + guard 形态）。
-- 根目录 docs：`d:/Projects/ENGINE-FOUNDATION-PLAN.md`、`ENGINE-DETERMINISM-ARCHITECTURE.md`、`AYRuntime/docs/first-game-engine-capability-map.md`。
+- 兄弟模块设计：`../AYVoxel/design.md`（骨架模板）、`../AYAnimation/design.md`（INV + 12 段 PR 模板纪律）、`../AYAudio/`（媒体库 vcpkg + guard 形态）。
+- 根目录 docs：`../../../../AYDocs/ENGINE-FOUNDATION-PLAN.md`、`../../../../AYDocs/ENGINE-DETERMINISM-ARCHITECTURE.md`、`../../../../AYDocs/first-game-engine-capability-map.md`。
+- 引擎架构入口：`../../../../AYDocs/ARCHITECTURE.md`(v0.8.0 起权威)。
