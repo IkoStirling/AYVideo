@@ -99,3 +99,7 @@ else()
 endif()
 
 ay_add_test(${TEST_TARGET})
+# The suite already creates decode and playback worker threads.  Keep the
+# aggregate stress run isolated from other heavyweight CTest processes so its
+# scheduling and shutdown checks remain deterministic.
+set_tests_properties(${TEST_TARGET} PROPERTIES RUN_SERIAL TRUE)
