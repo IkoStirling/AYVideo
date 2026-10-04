@@ -365,7 +365,7 @@ private:
     // AYAudio PCM bridge (not owned). Handles are Invalid* when inactive.
     ayt::audio::AudioEngine* _audioEngine = nullptr;
     uint32_t _audioStreamId = 0;   // ayt::audio::AudioStreamId
-    uint32_t _audioVoice = 0;      // ayt::audio::VoiceHandle
+    uint64_t _audioVoice = 0;      // ayt::audio::VoiceHandle
     // Media-time origin for AudioMaster: voicePositionFrames restarts at 0
     // after every bridge rebuild, so position = base + voice.
     std::int64_t _audioMasterBaseUs = 0;

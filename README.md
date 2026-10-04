@@ -84,3 +84,6 @@ AYVideo/
 ├── ecs/
 └── unittest/
 ```
+
+2026-10-04: VideoPlayer stores the AYAudio voice identity as uint64_t, matching
+the opaque 64-bit VoiceHandle and avoiding truncation during audio-master sync.

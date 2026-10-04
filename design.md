@@ -729,3 +729,6 @@ cmake --build D:\Projects\out\build\x64-Debug --target AYVideo_Tests
 10. **3-run stable**（连续 3 次全绿数字）
 11. **教训 / landmine**（本次踩坑记录，进本文件对应章节）
 12. **deferred**（本轮明确不做、留给下一 Phase 的清单）
+
+2026-10-04: VideoPlayer stores the AYAudio voice identity as uint64_t, matching
+the opaque 64-bit VoiceHandle and avoiding truncation during audio-master sync.
