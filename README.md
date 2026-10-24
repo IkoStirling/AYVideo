@@ -1,5 +1,9 @@
 # AYVideo
 
+独立桌面/工具宿主可启用 `AY_ENABLE_VIDEO_DECODE=ON` 并链接 `AYVideoDecode`，
+使用 [DecodeSession](docs/StandaloneDecode.md) 解码实际文件或 HTTP(S) 媒体，
+无需启用 World、Renderer、AudioEngine 或整个游戏 Runtime。
+
 流式实时视频播放模块（解封装 → 解码 → 帧队列 → 呈现/音频消费）。工业级设计：结果码纪律、线程契约、确定性测试、公开头零第三方泄漏。
 
 **当前状态**：V6 播放能力 + AYModule 可选装配 — FFmpeg demux/decode、解码线程、SPSC 帧队列、音频桥、帧纹理与软回退硬解接口；当前 `AYVideo_Tests` **1019/1019 PASS**。无 ffmpeg 时退化为 Null/Mock 测试面。

@@ -51,8 +51,21 @@ endif()
 # LIBRARY_DIRS) — it does NOT create FFmpeg::av* imported targets. Gate
 # on FFMPEG_FOUND + wrap the variables in a local INTERFACE target so
 # the rest of the module can link a single name (design.md §4.1 PRIVATE).
-find_package(FFMPEG QUIET)
-if(FFMPEG_FOUND)
+if(NOT TARGET AYVideoDecode)
+    find_package(FFMPEG QUIET)
+endif()
+if(TARGET AYVideoDecode)
+    list(REMOVE_ITEM SRC_FILES src/AYVideoTypes.cpp)
+    set(AYVIDEO_FFMPEG_LIBS AYVideoDecode)
+    set(AYVIDEO_HAS_FFMPEG ON)
+    # Full-runtime media tests also build synthetic FFmpeg fixtures.
+    # Reuse the decode target's dependency rather than compiling backends twice.
+    if(NOT TARGET AYVideo_FFmpeg)
+        add_library(AYVideo_FFmpeg INTERFACE)
+        get_target_property(_ayvideo_decode_ffmpeg AYVideoDecode AYVIDEO_FFMPEG_DEPENDENCY)
+        target_link_libraries(AYVideo_FFmpeg INTERFACE ${_ayvideo_decode_ffmpeg})
+    endif()
+elseif(FFMPEG_FOUND)
     list(APPEND BACKEND_FILES
         backend/FFmpegDemuxer.cpp
         backend/FFmpegDecoder.cpp

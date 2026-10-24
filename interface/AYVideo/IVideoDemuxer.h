@@ -39,6 +39,15 @@ struct DemuxerOpenParams
     uint32_t preferredBandwidthBps = 0;
     // RTSP: prefer TCP interleaved transport (more firewall-friendly).
     bool rtspPreferTcp = true;
+    /// Optional positive comma-separated protocol names (including nested opens).
+    /// Empty preserves backend defaults. This is not local-path authorization.
+    std::string protocolAllowlist;
+    /// Optional positive comma-separated demuxer names; empty preserves defaults.
+    /// Hosts can exclude playlist/concat demuxers for restricted local sources.
+    std::string formatAllowlist;
+    /// Optional credential-free HTTP CONNECT proxy origin for network sources.
+    /// Empty preserves backend defaults. The host resolves any system proxy.
+    std::string httpProxyOrigin;
 };
 
 // True when path looks like an HTTP(S) URL (V5 progressive / HLS).

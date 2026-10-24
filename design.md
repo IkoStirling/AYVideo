@@ -1,5 +1,9 @@
 # AYVideo 工业级设计（V1 FFmpeg 最小播放）
 
+> 2026-10-25：增加可选轻量 `AYVideoDecode`，复用后端但不加载游戏 Runtime。
+> 单 owner、拥有式 BGRA/PCM、seek/取消与依赖约束见
+> [StandaloneDecode](docs/StandaloneDecode.md)。此入口的独立测试不替代下文完整播放器测试。
+
 > **状态（2026-08-14）**：V1 FFmpeg 最小播放 — FFmpeg demux/decode 后端 + DecodeLoop（std::thread）+ SPSC FrameQueue + `pullFrame` 时钟门控呈现 + 事件回调 + 合成 mpeg4 stub（A-04）+ **544/544 PASS × 3-run stable** + G-01 guard 双向验证绿。V0.5 stub 行为保留（无 ffmpeg 时 Null/Mock only）。
 >
 > **不负责（本次）**：audio-master A/V sync、AYAudio PCM 桥、渲染上屏、seek 帧精确、网络流、字幕、AAC 合成轨稳定性 —— 按 §3 进入 V2+。

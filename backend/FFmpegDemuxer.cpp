@@ -99,6 +99,9 @@ FFmpegDemuxer::~FFmpegDemuxer()
 
 VideoResult FFmpegDemuxer::open(const DemuxerOpenParams& params)
 {
+    const auto validList=[](const std::string& list){if(list.empty())return true;if(list.size()>512||list.front()==','||list.back()==','||list.find(",,")!=std::string::npos)return false;for(unsigned char c:list)if(!((c>='a'&&c<='z')||(c>='0'&&c<='9')||c=='_'||c==','))return false;return true;};
+    if(!validList(params.protocolAllowlist)||!validList(params.formatAllowlist))return VideoResult::InvalidArgument;
+    if(!params.httpProxyOrigin.empty()&&(!params.httpProxyOrigin.starts_with("http://")||params.httpProxyOrigin.size()>2048||params.httpProxyOrigin.size()<=7||params.httpProxyOrigin.find_first_of("/@?#\\ \t\r\n",7)!=std::string::npos||params.httpProxyOrigin.find('\0')!=std::string::npos))return VideoResult::InvalidArgument;
     if (_impl->open)
     {
         return VideoResult::InvalidState; // open() on an open demuxer
@@ -119,6 +122,9 @@ VideoResult FFmpegDemuxer::open(const DemuxerOpenParams& params)
     _impl->interrupt.store(false, std::memory_order_relaxed);
 
     AVDictionary* opts = nullptr;
+    if(!params.protocolAllowlist.empty())av_dict_set(&opts,"protocol_whitelist",params.protocolAllowlist.c_str(),0);
+    if(!params.formatAllowlist.empty())av_dict_set(&opts,"format_whitelist",params.formatAllowlist.c_str(),0);
+    if(!params.httpProxyOrigin.empty())av_dict_set(&opts,"http_proxy",params.httpProxyOrigin.c_str(),0);
     const bool http = isHttpUrl(params.path);
     const bool rtsp = isRtspUrl(params.path);
     const bool hls = isHlsUrl(params.path);
