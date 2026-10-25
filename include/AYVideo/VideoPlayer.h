@@ -89,6 +89,11 @@ public:
     // state -> Ready, media info available via getMediaInfo.
     VideoResult open(const std::string& path);
 
+    /// Opens with host-owned network/protocol/container limits. Unlike open(path),
+    /// this entry preserves every supplied option exactly, including on reconnect
+    /// and seek reopen. It does not authorize local paths; that is the host's job.
+    VideoResult openWithOptions(const DemuxerOpenParams& params);
+
     // Starts / resumes presentation. From Ready (fresh open or EOS):
     // replays from 0. From Paused: resumes the paused position.
     VideoResult play();

@@ -91,3 +91,9 @@ AYVideo/
 
 2026-10-04: VideoPlayer stores the AYAudio voice identity as uint64_t, matching
 the opaque 64-bit VoiceHandle and avoiding truncation during audio-master sync.
+# Standalone full-player entry
+
+Desktop hosts can link `AYVideoPlayback` to reuse AYVideoPlayer with its existing
+async decode and audio-master sync, without GameLoop/ECS/Renderer assembly.
+See [StandalonePlayback](docs/StandalonePlayback.md) for composition, host-owned
+open options and tests. AYVideoDecode is still the decode-only alternative.

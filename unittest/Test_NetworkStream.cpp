@@ -62,6 +62,24 @@ bool waitUntilNotBuffering(AYVideoPlayer& p, int maxTries = 4000)
 
 TEST_SUITE(NetworkStreamSuite)
 
+    TEST_CASE(HostOptionsArePreservedThroughPlaybackAndSeek) {
+        auto demux=std::make_unique<MockDemuxer>(16);auto* observed=demux.get();
+        AYVideoPlayer player(std::move(demux),std::make_unique<MockDecoder>(16));
+        DemuxerOpenParams params;params.path="https://media.example/movie.mp4";
+        params.protocolAllowlist="https,tls,tcp";params.formatAllowlist="mov";
+        params.httpProxyOrigin="http://127.0.0.1:8123";params.openTimeoutMs=1234;params.rwTimeoutMs=2345;params.reconnectMax=0;
+        CHECK(player.openWithOptions(params)==VideoResult::Ok);
+        CHECK(observed->lastOpenParams().reconnectMax==0);
+        CHECK(observed->lastOpenParams().openTimeoutMs==1234);
+        CHECK(player.play()==VideoResult::Ok);CHECK(player.pause()==VideoResult::Ok);
+        CHECK(player.seek(ayt::time::Duration::fromUs(40000))==VideoResult::Ok);
+        CHECK(observed->lastOpenParams().protocolAllowlist==params.protocolAllowlist);
+        CHECK(observed->lastOpenParams().formatAllowlist==params.formatAllowlist);
+        CHECK(observed->lastOpenParams().httpProxyOrigin==params.httpProxyOrigin);
+        CHECK(observed->lastOpenParams().rwTimeoutMs==2345);
+        CHECK(player.stop()==VideoResult::Ok);
+    }
+
     TEST_CASE(HttpOpenAllowsSeek) {
         FakeNow::us = 0;
         AYVideoPlayer player(std::make_unique<MockDemuxer>(8),

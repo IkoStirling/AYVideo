@@ -1097,21 +1097,6 @@ void AYVideoPlayer::teardownPipeline() noexcept
 
 VideoResult AYVideoPlayer::open(const std::string& path)
 {
-    if (_state != PlayerState::Idle && _state != PlayerState::Stopped)
-    {
-        _lastResult = VideoResult::InvalidState;
-        return VideoResult::InvalidState;
-    }
-    const PlayerState from = _state;
-    transition(from, PlayerState::Opening);
-
-    if (!_demuxer || !_decoder)
-    {
-        _lastResult = VideoResult::UnsupportedFormat;
-        transition(PlayerState::Opening, PlayerState::Failed);
-        return _lastResult;
-    }
-
     DemuxerOpenParams params;
     params.path = path;
     params.preferredBandwidthBps = _preferredBandwidthBps;
@@ -1139,6 +1124,27 @@ VideoResult AYVideoPlayer::open(const std::string& path)
         params.reconnectMax = 3;
         params.reconnectDelayMs = 50; // keep Mock inject tests snappy
     }
+    return openWithOptions(params);
+}
+
+VideoResult AYVideoPlayer::openWithOptions(const DemuxerOpenParams& params)
+{
+    const auto& path = params.path;
+    if (_state != PlayerState::Idle && _state != PlayerState::Stopped)
+    {
+        _lastResult = VideoResult::InvalidState;
+        return VideoResult::InvalidState;
+    }
+    const PlayerState from = _state;
+    transition(from, PlayerState::Opening);
+
+    if (!_demuxer || !_decoder)
+    {
+        _lastResult = VideoResult::UnsupportedFormat;
+        transition(PlayerState::Opening, PlayerState::Failed);
+        return _lastResult;
+    }
+
     if (auto r = _demuxer->open(params); r != VideoResult::Ok)
     {
         _lastResult = r;

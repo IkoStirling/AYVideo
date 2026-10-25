@@ -1,5 +1,9 @@
 # AYVideo 工业级设计（V1 FFmpeg 最小播放）
 
+> 2026-10-25：完整播放器另提供 `AYVideoPlayback` 轻量链接入口，复用现有解码线程、
+> 帧队列、同步时钟及音频桥；`openWithOptions` 保留宿主的传输限制。
+> [桌面宿主装配](docs/StandalonePlayback.md)。下文早期 V1 范围不代表当前完整能力。
+
 > 2026-10-25：增加可选轻量 `AYVideoDecode`，复用后端但不加载游戏 Runtime。
 > 单 owner、拥有式 BGRA/PCM、seek/取消与依赖约束见
 > [StandaloneDecode](docs/StandaloneDecode.md)。此入口的独立测试不替代下文完整播放器测试。
